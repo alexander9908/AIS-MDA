@@ -1,65 +1,124 @@
 from __future__ import annotations
-import argparse, sys, numpy as np
+import argparse
+import sys
 from pathlib import Path
-sys.path.append(str(Path(__file__).resolve().parents[1]))
+
+import numpy as np
 import pandas as pd
+
+# Ensure package import works when running from scripts/
+sys.path.append(str(Path(__file__).resolve().parents[1]))
+
 from src.labeling.traj_labels import make_traj_windows
+
+
+def _save_scaler(X: np.ndarray, out_dir: Path):
+    """
+    Save a simple feature scaler (mean/std) computed over all time steps.
+    X is [N, T, F].
+    """
+    flat = X.reshape(-1, X.shape[-1])
+    mean = flat.mean(axis=0).astype("float32")
+    std = flat.std(axis=0).astype("float32") + 1e-8
+    np.savez(out_dir / "scaler.npz", mean=mean, std=std)
+
+
+def _save_window_mmsi(df: pd.DataFrame, window: int, horizon: int, out_dir: Path):
+    """
+    Save an array of MMSIs for each window produced by make_traj_windows.
+    Must mirror the exact windowing logic to align with X/Y.
+    """
+    mmsis: list[int] = []
+    for (mmsi, seg), g in df.groupby(["mmsi", "segment_id"], sort=False):
+        g = g.reset_index(drop=True)
+        for _i in range(len(g) - (window + horizon)):
+            mmsis.append(int(mmsi))
+    np.save(out_dir / "window_mmsi.npy", np.array(mmsis, dtype="int64"))
+
 
 def build_traj(interim_path: Path, out_dir: Path, window: int, horizon: int, features: list[str] | None):
     df = pd.read_parquet(interim_path)
-    X, Y, meta = make_traj_windows(df, window=window, horizon=horizon, features=features)
     out_dir.mkdir(parents=True, exist_ok=True)
-    np.save(out_dir / "X.npy", X)
-    np.save(out_dir / "Y.npy", Y)
-    (out_dir / "meta.json").write_text(json_dumps(meta))
+
+    X, Y, meta = make_traj_windows(df, window=window, horizon=horizon, features=features)
+
+    # Save scalers and window MMSIs for MMSI-wise splitting & normalization
+    if X.size > 0:
+        _save_scaler(X, out_dir)
+        _save_window_mmsi(df, window=window, horizon=horizon, out_dir=out_dir)
+
+    np.save(out_dir / "X.npy", X.astype("float32", copy=False))
+    np.save(out_dir / "Y.npy", Y.astype("float32", copy=False))
+
+    (out_dir / "meta.json").write_text(json_dumps({"features": meta.get("features", features),
+                                                   "window": window, "horizon": horizon}))
     print(f"[trajectory] Saved X.npy {X.shape}, Y.npy {Y.shape} to {out_dir}")
+
 
 def build_eta(interim_path: Path, out_dir: Path, window: int, features: list[str] | None):
     df = pd.read_parquet(interim_path)
-    # For demo: fabricate simple distance-to-destination and ETA if not present
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # For demo/pipeline continuity: fabricate placeholder ETA if real labels absent
     if "time_to_port_sec" not in df.columns:
-        df["time_to_port_sec"] = np.nan  # Placeholder
-        df = df.dropna(subset=["dx","dy","dt"])  # ensure features exist
-    # Build sliding windows for features only; predict ETA at window end (placeholder random demo if missing)
-    groups = list(df.groupby(["mmsi","segment_id"]))
+        df["time_to_port_sec"] = np.nan
+
+    # Ensure key feature columns exist for windows
+    df = df.dropna(subset=["dx", "dy", "dt"])
+
+    F = features or ["sog", "cog_sin", "cog_cos", "accel", "dt", "dx", "dy"]
     Xs, ys = [], []
-    F = features or ["sog","cog_sin","cog_cos","accel","dt","dx","dy"]
-    for (_, _), g in groups:
+    for (_, _), g in df.groupby(["mmsi", "segment_id"], sort=False):
         g = g.reset_index(drop=True)
+        # Windows [i : i+window), label at i+window
+        # If no real ETA labels, use sum of dt over next window as pseudo-ETA
         for i in range(len(g) - window - 1):
             Xs.append(g.loc[i:i+window-1, F].values.astype("float32"))
-            # Placeholder: if no real label, use next dt*cumulative steps as pseudo-ETA (demo only)
             if g["time_to_port_sec"].notna().any():
-                y = g.loc[i+window, "time_to_port_sec"]
+                y = float(g.loc[i + window, "time_to_port_sec"])
             else:
                 y = float(g.loc[i+1:i+window+1, "dt"].sum())
             ys.append(y)
-    X = np.stack(Xs, axis=0) if Xs else np.empty((0,window,len(F)), dtype="float32")
+
+    X = np.stack(Xs, axis=0).astype("float32") if Xs else np.empty((0, window, len(F)), dtype="float32")
     y = np.array(ys, dtype="float32") if ys else np.empty((0,), dtype="float32")
-    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Save a scaler for ETA features too (helps trainers)
+    if X.size > 0:
+        _save_scaler(X, out_dir)
+
     np.save(out_dir / "X.npy", X)
     np.save(out_dir / "y_eta.npy", y)
-    (out_dir / "meta.json").write_text(json_dumps({"features":F,"window":window}))
+    (out_dir / "meta.json").write_text(json_dumps({"features": F, "window": window}))
     print(f"[eta] Saved X.npy {X.shape}, y_eta.npy {y.shape} to {out_dir}")
+
 
 def build_anom(interim_path: Path, out_dir: Path, window: int, horizon: int, features: list[str] | None):
     df = pd.read_parquet(interim_path)
-    X, Y, meta = make_traj_windows(df, window=window, horizon=horizon, features=features)
     out_dir.mkdir(parents=True, exist_ok=True)
-    np.save(out_dir / "X.npy", X)
-    np.save(out_dir / "Y.npy", Y)
-    (out_dir / "meta.json").write_text(json_dumps(meta))
+
+    X, Y, meta = make_traj_windows(df, window=window, horizon=horizon, features=features)
+
+    if X.size > 0:
+        _save_scaler(X, out_dir)
+        _save_window_mmsi(df, window=window, horizon=horizon, out_dir=out_dir)
+
+    np.save(out_dir / "X.npy", X.astype("float32", copy=False))
+    np.save(out_dir / "Y.npy", Y.astype("float32", copy=False))
+    (out_dir / "meta.json").write_text(json_dumps({"features": meta.get("features", features),
+                                                   "window": window, "horizon": horizon}))
     print(f"[anomaly] Saved X.npy {X.shape}, Y.npy {Y.shape} to {out_dir}")
+
 
 def json_dumps(obj):
     import json as _json
     return _json.dumps(obj, indent=2)
 
+
 def main():
-    import argparse, json
     ap = argparse.ArgumentParser(description="Build processed tensors (X.npy/Y.npy) from interim parquet")
     ap.add_argument("--interim", required=True, help="Path to interim parquet (from make_interim.py)")
-    ap.add_argument("--task", required=True, choices=["trajectory","eta","anomaly"])
+    ap.add_argument("--task", required=True, choices=["trajectory", "eta", "anomaly"])
     ap.add_argument("--window", type=int, default=64)
     ap.add_argument("--horizon", type=int, default=12)
     ap.add_argument("--features", nargs="*", default=None)
@@ -75,6 +134,7 @@ def main():
         build_eta(interim_path, out_dir, args.window, args.features)
     else:
         build_anom(interim_path, out_dir, args.window, args.horizon, args.features)
+
 
 if __name__ == "__main__":
     main()
