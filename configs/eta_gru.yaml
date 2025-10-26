@@ -1,0 +1,14 @@
+task: eta
+processed_dir: /mnt/data/processed/eta_w64
+out_dir: /mnt/data/checkpoints
+window: 64
+features: [sog, cog_sin, cog_cos, accel, dt, dx, dy, dist_to_port, bearing_to_port]
+model:
+  name: gru
+  d_model: 128
+  layers: 2
+loss: mae
+optimizer: adam
+lr: 0.001
+batch_size: 256
+epochs: 5

@@ -1,0 +1,15 @@
+task: anomaly
+processed_dir: /mnt/data/processed/anom_w64_h12
+out_dir: /mnt/data/checkpoints
+window: 64
+horizon: 12
+features: [dx, dy, sog, cog_sin, cog_cos, accel, dt]
+model:
+  name: gru
+  d_model: 128
+  layers: 2
+loss: huber
+optimizer: adam
+lr: 0.001
+batch_size: 128
+epochs: 5

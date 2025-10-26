@@ -1,0 +1,15 @@
+task: trajectory
+processed_dir: /mnt/data/processed/traj_w64_h12
+out_dir: /mnt/data/checkpoints
+window: 64
+horizon: 12
+features: [dx, dy, sog, cog_sin, cog_cos, accel, dt]
+model:
+  name: gru
+  d_model: 128
+  layers: 2
+loss: huber
+optimizer: adamw
+lr: 0.0005
+batch_size: 128
+epochs: 5
