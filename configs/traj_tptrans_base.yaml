@@ -1,8 +1,8 @@
 task: trajectory
-processed_dir: /mnt/data/processed/traj_w96_h20
-out_dir: /mnt/data/checkpoints
-window: 96
-horizon: 20
+processed_dir: data/processed/traj_w64_h12
+out_dir: data/checkpoints
+window: 64
+horizon: 12
 features: [dx, dy, sog, cog_sin, cog_cos, accel, dt, cell_id]
 model:
   name: tptrans

@@ -1,6 +1,6 @@
 task: eta
-processed_dir: /mnt/data/processed/eta_w64
-out_dir: /mnt/data/checkpoints
+processed_dir: data/processed/eta_w64
+out_dir: data/checkpoints
 window: 64
 features: [sog, cog_sin, cog_cos, accel, dt, dx, dy, dist_to_port, bearing_to_port]
 model:

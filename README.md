@@ -159,6 +159,14 @@ ais-mda/
 
 Using **Python venv + pip** (recommended):
 
+Using VS Code:
+Open command palette:
+- Ctrl+Shift+P
+- Command+Shift+P
+
+Python Create environment → Select venv → Choose requirements.txt
+
+Or via terminal:
 ```bash
 # Create virtual environment
 python3 -m venv .venv

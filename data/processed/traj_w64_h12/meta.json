@@ -1,0 +1,13 @@
+{
+  "features": [
+    "dx",
+    "dy",
+    "sog",
+    "cog_sin",
+    "cog_cos",
+    "accel",
+    "dt"
+  ],
+  "window": 64,
+  "horizon": 12
+}
