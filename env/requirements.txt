@@ -1,0 +1,22 @@
+# Core scientific stack
+numpy
+pandas
+pyarrow
+tqdm
+matplotlib
+scikit-learn
+pyyaml
+
+# Geospatial / data utilities
+shapely
+geopandas
+h3
+
+# Deep learning
+torch
+torchvision
+torchaudio
+
+# Optional: Jupyter for interactive work
+notebook
+jupyterlab

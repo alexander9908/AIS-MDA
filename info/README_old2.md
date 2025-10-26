@@ -1,9 +1,4 @@
-Perfect 👍 — here’s your updated README.md, rewritten to use a Python virtual environment (.venv) instead of Conda, while keeping all existing content, layout, and formatting intact.
-I’ve also slightly cleaned up indentation and block formatting so it renders beautifully on GitHub.
-
-⸻
-
-
+Here’s your complete README.md — you can copy it directly or find it at
 # AIS-MDA — Increasing Maritime Domain Awareness with Spatio-Temporal Models
 
 This repository provides a **ready-to-run** pipeline for working with real, irregular, and noisy **AIS** (Automatic Identification System) data to solve three key tasks:
@@ -26,13 +21,14 @@ It includes:
 ais-mda/
 ├── README.md
 ├── env/
-│   ├── requirements.txt
+│   ├── environment.yml
 │   └── Dockerfile
 ├── configs/
 ├── scripts/
 └── src/
 
 ---
+
 
 ## 🚢 Background
 
@@ -91,7 +87,7 @@ These research papers guide our methodology:
 ais-mda/
 ├── README.md
 ├── env/
-│   ├── requirements.txt
+│   ├── environment.yml
 │   └── Dockerfile
 ├── data/
 │   ├── raw/          # Raw AIS data (CSV or Parquet)
@@ -111,6 +107,58 @@ ais-mda/
 │   └── utils/        # geospatial and batching helpers
 ├── configs/          # YAML configs for experiments
 └── scripts/          # CLI automation for preprocessing/training
+
+### Expanded Project Structure
+ais-mda/
+├── README.md
+├── env/                         # environment & docker
+│   ├── environment.yml
+│   └── Dockerfile
+├── data/
+│   ├── raw/                     # original AIS dumps (parquet/csv)
+│   ├── interim/                 # cleaned segments
+│   └── processed/               # windowed tensors / features
+├── notebooks/
+│   ├── 00_explore_ais.ipynb
+│   ├── 10_build_segments.ipynb
+│   └── 20_train_baselines.ipynb
+├── src/
+│   ├── config.py
+│   ├── dataio/
+│   │   ├── load_ais.py          # robust loader (csv/parquet)
+│   │   ├── clean.py             # QC, outlier rules, denoise
+│   │   └── segment.py           # trajectory splits, resampling (optional)
+│   ├── features/
+│   │   ├── kinematics.py        # Δt, Δx/Δy, ROT, accel, etc.
+│   │   └── context.py           # cells, port proximity, route features
+│   ├── labeling/
+│   │   ├── traj_labels.py       # next-K deltas
+│   │   ├── eta_labels.py        # next port + true ETA
+│   │   └── anomalies.py         # synthetic anomalies for eval
+│   ├── models/
+│   │   ├── kinematic.py         # CV/CTRV baselines (and EKF wrapper)
+│   │   ├── rnn_seq2seq.py       # LSTM/BiLSTM/GRU baselines
+│   │   └── tptrans.py           # CNN+Transformer (TPTrans-style)
+│   ├── train/
+│   │   ├── train_traj.py
+│   │   ├── train_eta.py
+│   │   └── train_anom.py
+│   ├── eval/
+│   │   ├── metrics_traj.py      # ADE, FDE, DFD/Hausdorff
+│   │   ├── metrics_eta.py       # MAE, MAPE, P95
+│   │   └── metrics_anom.py      # AUROC, AUPRC, TTD
+│   └── utils/
+│       ├── geo.py               # proj, haversine, UTM helpers
+│       └── batching.py          # masking, padding
+├── configs/
+│   ├── traj_gru_small.yaml
+│   ├── traj_tptrans_base.yaml
+│   ├── eta_gru.yaml
+│   └── anom_masked.yaml
+└── scripts/
+    ├── make_interim.sh
+    ├── make_processed.sh
+    └── train.sh
 
 ---
 
@@ -151,43 +199,29 @@ ais-mda/
 - Show horizon-based accuracy decay.
 - Plot ETA error distributions.
 
----
-
 ## 🚀 Quickstart
 
-### 0) Create Environment
+### 0) Create environment
 
-Using **Python venv + pip** (recommended):
-
+Using Conda or Mamba:
 ```bash
-# Create virtual environment
-python3 -m venv .venv
-
-# Activate it (macOS/Linux)
-source .venv/bin/activate
-
-# or on Windows
-.venv\Scripts\activate
-
-# Install dependencies
-pip install --upgrade pip
-pip install -r env/requirements.txt
+conda env create -f env/environment.yml
+conda activate ais
 
 With Docker (GPU optional):
 
-docker build -t ais-mda -f env/Dockerfile .
+docker build -t ais-mda . -f env/Dockerfile
 docker run --rm -it -v "$(pwd)":/workspace -w /workspace ais-mda bash
 ```
 
 ⸻
 
-1) Prepare Interim Dataset
+1) Prepare interim dataset
 
 (Clean → Segment → Feature Engineering)
-
 ```bash
 bash scripts/make_interim.sh \
-  --raw data/raw/*.csv \
+  --raw data/raw/*.parquet \
   --out data/interim \
   --gap_hours 6 --max_sog 40
 ```
@@ -199,49 +233,51 @@ This script:
 	•	Adds grid-cell context (cell_id).
 
 Output:
-```bash
 data/interim/interim.parquet
-```
+
 ⸻
 
-2) Build Processed Tensors for Model Training
+2) Build processed tensors for model training
 
 Trajectory task
 ```bash
 bash scripts/make_processed.sh \
   --interim data/interim/interim.parquet \
   --task trajectory --window 64 --horizon 12 \
-  --out data/processed/traj_w64_h12
+  --out /mnt/data/processed/traj_w64_h12
 ```
+
 ETA task
 ```bash
 bash scripts/make_processed.sh \
   --interim data/interim/interim.parquet \
   --task eta --window 64 \
-  --out data/processed/eta_w64
+  --out /mnt/data/processed/eta_w64
 ```
+
 Anomaly task
 ```bash
 bash scripts/make_processed.sh \
   --interim data/interim/interim.parquet \
   --task anomaly --window 64 --horizon 12 \
-  --out data/processed/anom_w64_h12
+  --out /mnt/data/processed/anom_w64_h12
 ```
 
 ⸻
 
-3) Train Models
+3) Train models
 
 GRU baseline (trajectory)
+
 ```bash
 python -m src.train.train_traj --config configs/traj_gru_small.yaml
-```
+
 TPTrans hybrid (CNN + Transformer)
-```bash
+
 python -m src.train.train_traj --config configs/traj_tptrans_base.yaml
-```
+
 ETA prediction (GRU)
-```bash
+
 python -m src.train.train_eta --config configs/eta_gru.yaml
 ```
 
@@ -264,7 +300,6 @@ GRUSeq2Seq	RNN	Trajectory / ETA	Encoder-decoder GRU
 TPTrans	CNN + Transformer	Trajectory	Local + global spatio-temporal model
 GRU Forecaster	RNN	Anomaly	Self-supervised reconstruction/forecasting
 
-
 ⸻
 
 ⚙️ Data Expectations
@@ -277,7 +312,6 @@ Recommended:
 
 sog, cog, heading, nav_status, shiptype, draught, destination
 
-
 ⸻
 
 📈 Metrics
@@ -287,13 +321,13 @@ Trajectory	ADE, FDE, Hausdorff	Position accuracy per horizon
 ETA	MAE, MAPE, P95	Time-of-arrival accuracy
 Anomaly	AUROC, AUPRC, TTD	Detection accuracy and latency
 
-Metric descriptions
-	•	ADE: Average Displacement Error — mean L2 distance between predicted and true positions.
-	•	FDE: Final Displacement Error — distance at final predicted step.
-	•	MAE / MAPE: Mean (Absolute) Error / Mean Absolute Percentage Error for ETA.
-	•	P95: 95th percentile ETA error.
-	•	AUROC / AUPRC: Anomaly detection quality.
-	•	TTD: Time-to-detection (anomaly detection latency).
+Metric	Description
+ADE	Average Displacement Error — mean L2 distance between predicted and true positions.
+FDE	Final Displacement Error — distance at final predicted step.
+MAE / MAPE	Mean (Absolute) Error / Mean Absolute Percentage Error for ETA.
+P95	95th percentile ETA error.
+AUROC / AUPRC	Anomaly detection quality.
+TTD	Time-to-detection (anomaly detection latency).
 
 ⸻
 
@@ -305,14 +339,13 @@ CNN + Transformer improves turning and long-horizon accuracy.	TPTrans 2023
 ETA accuracy depends on vessel dynamics, route features, and environment.	ETA Review 2025
 Data cleaning, segmentation, and feature engineering strongly affect model quality.	AI in Ship Trajectory Prediction 2024
 
-
 ⸻
 
 🏁 Deliverables
 	1.	Clean AIS dataset with feature and label sets.
 	2.	Baseline + TPTrans model checkpoints.
 	3.	Evaluation report (tables, figures, ablation results).
-	4.	Final presentation: “Deep Learning for Maritime Domain Awareness”
+	4.	Final presentation: “Deep Learning for Maritime Domain Awareness”.
 
 ⸻
 
@@ -325,14 +358,12 @@ Data cleaning, segmentation, and feature engineering strongly affect model quali
 ⸻
 
 🛠️ Troubleshooting
-	•	CUDA not found → Install CPU-only PyTorch or remove CUDA wheels from requirements.txt.
-	•	Column mismatch → Adjust src/dataio/load_ais.py or rename columns in raw data.
-	•	Insufficient data → Reduce window or horizon in YAML configs.
-	•	Permissions → Make sure scripts are executable:
-```bash
-chmod +x scripts/*.sh
-```
+	•	CUDA not found → comment out pytorch-cuda in env/environment.yml for CPU use.
+	•	Column mismatch → adjust src/dataio/load_ais.py or rename columns in raw data.
+	•	Insufficient data → reduce window or horizon in YAML configs.
+	•	Permissions → make sure scripts are executable:
 
+chmod +x scripts/*.sh
 
 ⸻
 
@@ -355,3 +386,4 @@ Location: Copenhagen, Denmark
 
 ---
 
+/Users/alexanderschiotz/Desktop/DTU/Master/Deep Learning/Projects/ais-mda
