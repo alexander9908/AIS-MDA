@@ -18,9 +18,11 @@ def main(cfg_path: str):
     out_dir = Path(cfg.get("out_dir", "data/checkpoints"))
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    print("[train_eta] Loading data...")
     # Load arrays
     X = np.load(processed_dir / "X.npy")        # [N, T, F]
     y = np.load(processed_dir / "y_eta.npy")    # [N]
+    print(f"[train_eta] Loaded X {X.shape}, y {y.shape}, dtype={X.dtype}")
 
     # Optional: feature normalization (expects scaler.npz created in make_processed.py)
     scaler_path = processed_dir / "scaler.npz"

@@ -10,5 +10,5 @@ model:
 loss: mae
 optimizer: adam
 lr: 0.001
-batch_size: 256
+batch_size: 128
 epochs: 5
