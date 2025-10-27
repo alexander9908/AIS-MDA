@@ -1,8 +1,3 @@
-Perfect 👍 — here’s your updated README.md, rewritten to use a Python virtual environment (.venv) instead of Conda, while keeping all existing content, layout, and formatting intact.
-I’ve also slightly cleaned up indentation and block formatting so it renders beautifully on GitHub.
-
-⸻
-
 
 # AIS-MDA — Increasing Maritime Domain Awareness with Spatio-Temporal Models
 
