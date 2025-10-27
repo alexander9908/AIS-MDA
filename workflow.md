@@ -493,6 +493,16 @@ python -m src.eval.evaluate_traj \
   --plot
 ```
 
+# 5) Run all
+```bash
+bash scripts/run_all.sh
+```
+
+# 6) Eval all
+```bash
+python scripts/summarize_results.py
+```
+
 ⸻
 
 13) Ready for a Report

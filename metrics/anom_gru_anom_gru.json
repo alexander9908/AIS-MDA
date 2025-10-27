@@ -1,0 +1,7 @@
+{
+  "task": "anomaly",
+  "model": "gru",
+  "ckpt": "data/checkpoints/anom_gru.pt",
+  "auroc": 0.500067676812626,
+  "auprc": 0.5001559250823799
+}

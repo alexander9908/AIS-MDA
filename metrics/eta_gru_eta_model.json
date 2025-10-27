@@ -1,0 +1,8 @@
+{
+  "task": "eta",
+  "model": "gru",
+  "ckpt": "data/checkpoints/eta_model.pt",
+  "mae": 3892.037841796875,
+  "mape": 0.9979583621025085,
+  "p95": 3892.0400390625
+}

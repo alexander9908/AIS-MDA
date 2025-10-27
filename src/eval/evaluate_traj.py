@@ -1,4 +1,3 @@
-# src/eval/evaluate_traj.py
 from __future__ import annotations
 import argparse
 from pathlib import Path
@@ -63,7 +62,6 @@ def main():
         else:
             return TPTrans(feat_dim, d_model=192, nhead=4, enc_layers=4, dec_layers=2, horizon=horizon)
 
-    # We already have a model built per args.model, but keep a builder for fallback
     loaded_as = args.model
     try:
         model.load_state_dict(state)
@@ -76,7 +74,6 @@ def main():
             loaded_as = other
             print(f"[info] Loaded checkpoint as {other} (auto-detected).")
         except Exception as e_second:
-            # last attempt: strict=False on requested model
             model = _build(args.model)
             try:
                 model.load_state_dict(state, strict=False)
@@ -91,8 +88,25 @@ def main():
     with torch.no_grad():
         pred = model(torch.from_numpy(Xva).float()).numpy()
 
-    print(f"VAL: ADE={ade(pred, Yva):.3f}  FDE={fde(pred, Yva):.3f}")
+    ade_val = float(ade(pred, Yva))
+    fde_val = float(fde(pred, Yva))
+    print(f"VAL: ADE={ade_val:.3f}  FDE={fde_val:.3f}")
 
+    # Save metrics to JSON
+    mdir = Path("metrics")
+    mdir.mkdir(parents=True, exist_ok=True)
+    out_json = mdir / f"traj_{loaded_as}_{Path(args.ckpt).stem}.json"
+    res = {
+        "task": "trajectory",
+        "model": loaded_as,
+        "ckpt": str(args.ckpt),
+        "ade": ade_val,
+        "fde": fde_val,
+    }
+    out_json.write_text(json.dumps(res, indent=2))
+    print(f"[metrics] wrote {out_json}")
+
+    # Optional plots
     if args.plot:
         import matplotlib.pyplot as plt
         figdir = Path("data/figures")
@@ -108,7 +122,6 @@ def main():
             plt.plot(predseq[:, 0], predseq[:, 1], label="pred", linestyle="--")
             plt.legend()
 
-            # Use a robust global index for filename
             if use_mmsi_split:
                 global_idx = int(val_idx[local_idx])
             else:

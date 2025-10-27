@@ -1,0 +1,7 @@
+{
+  "task": "trajectory",
+  "model": "gru",
+  "ckpt": "data/checkpoints/traj_gru.pt",
+  "ade": 41.47804260253906,
+  "fde": 41.60700607299805
+}
