@@ -45,6 +45,12 @@ def build_traj(interim_path: Path, out_dir: Path, window: int, horizon: int, fea
     # Save scalers and window MMSIs for MMSI-wise splitting & normalization
     if X.size > 0:
         _save_scaler(X, out_dir)
+        # --- target scaler for Y (per-dimension over all horizons) ---
+        y_flat = Y.reshape(-1, Y.shape[-1]).astype("float32")
+        y_mean = y_flat.mean(axis=0)
+        y_std  = y_flat.std(axis=0) + 1e-8
+        np.savez(out_dir / "target_scaler.npz", mean=y_mean, std=y_std)
+        # ---------------------------------------------------------------
         _save_window_mmsi(df, window=window, horizon=horizon, out_dir=out_dir)
 
     np.save(out_dir / "X.npy", X.astype("float32", copy=False))
@@ -101,6 +107,12 @@ def build_anom(interim_path: Path, out_dir: Path, window: int, horizon: int, fea
 
     if X.size > 0:
         _save_scaler(X, out_dir)
+        # --- target scaler for Y ---
+        y_flat = Y.reshape(-1, Y.shape[-1]).astype("float32")
+        y_mean = y_flat.mean(axis=0)
+        y_std  = y_flat.std(axis=0) + 1e-8
+        np.savez(out_dir / "target_scaler.npz", mean=y_mean, std=y_std)
+        # --------------------------------
         _save_window_mmsi(df, window=window, horizon=horizon, out_dir=out_dir)
 
     np.save(out_dir / "X.npy", X.astype("float32", copy=False))

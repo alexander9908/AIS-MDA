@@ -54,12 +54,38 @@ def main():
     else:
         model = TPTrans(feat_dim, d_model=192, nhead=4, enc_layers=4, dec_layers=2, horizon=horizon)
 
-    # Load checkpoint (be tolerant to small mismatches)
+    # Load checkpoint with architecture auto-detection
     state = torch.load(args.ckpt, map_location="cpu")
+
+    def _build(kind: str):
+        if kind == "gru":
+            return GRUSeq2Seq(feat_dim, d_model=128, layers=2, horizon=horizon)
+        else:
+            return TPTrans(feat_dim, d_model=192, nhead=4, enc_layers=4, dec_layers=2, horizon=horizon)
+
+    # We already have a model built per args.model, but keep a builder for fallback
+    loaded_as = args.model
     try:
         model.load_state_dict(state)
-    except Exception:
-        model.load_state_dict(state, strict=False)
+    except Exception as e_first:
+        # try the other architecture
+        other = "gru" if args.model == "tptrans" else "tptrans"
+        model = _build(other)
+        try:
+            model.load_state_dict(state)
+            loaded_as = other
+            print(f"[info] Loaded checkpoint as {other} (auto-detected).")
+        except Exception as e_second:
+            # last attempt: strict=False on requested model
+            model = _build(args.model)
+            try:
+                model.load_state_dict(state, strict=False)
+                print("[warn] Loaded with strict=False; keys/sizes mismatched.")
+            except Exception as e_final:
+                raise RuntimeError(
+                    f"Could not load checkpoint as '{args.model}' or '{other}'.\n"
+                    f"First error: {e_first}\nSecond error: {e_second}\nFinal error: {e_final}"
+                )
 
     model.eval()
     with torch.no_grad():

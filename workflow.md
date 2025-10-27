@@ -4,6 +4,80 @@ This document explains how to run the project step-by-step on a fresh machine us
 
 ⸻
 
+14) Nested Cross-Validation (SGD + Hyperparameter Tuning)
+
+This project includes a **2‑level (nested) cross‑validation** script that performs:
+- **Outer folds** (GroupKFold by **MMSI**) to estimate generalization (prevents vessel leakage).
+- **Inner folds** (GroupKFold by MMSI on the outer‑train) to tune **SGD** hyperparameters.
+
+### 14.1 Install extra dependency
+Make sure scikit‑learn is available:
+```bash
+pip install scikit-learn>=1.3
+```
+
+If it’s not already in your `env/requirements.txt`, add it and reinstall:
+```bash
+echo "scikit-learn>=1.3" >> env/requirements.txt
+pip install -r env/requirements.txt
+```
+
+### 14.2 Ensure processed data contains split metadata
+Rebuild trajectory tensors so `window_mmsi.npy` and `target_scaler.npz` are present:
+```bash
+bash scripts/make_processed.sh \
+  --interim data/interim/interim.parquet \
+  --task trajectory --window 64 --horizon 12 \
+  --out data/processed/traj_w64_h12
+```
+
+### 14.3 Run nested CV (TPTrans example)
+```bash
+python -m src.train.nested_cv_traj \
+  --processed_dir data/processed/traj_w64_h12 \
+  --model tptrans \
+  --outer_folds 5 \
+  --inner_folds 3 \
+  --max_trials 8
+```
+
+**Parameters**
+- `--model {tptrans,gru}`: choose the architecture to evaluate.
+- `--outer_folds`: number of outer folds (test estimation).
+- `--inner_folds`: number of inner folds (HP tuning on outer‑train).
+- `--max_trials`: number of random hyperparameter settings to try.
+
+**What it does**
+- Uses **GroupKFold by MMSI** for both outer and inner splits.
+- Trains with **SGD (momentum + Nesterov)** for a small number of epochs per trial.
+- Standardizes **targets (Y)** if `target_scaler.npz` exists; predictions are unscaled before ADE/FDE.
+
+**Output**
+- Console shows per‑fold **ADE/FDE** and the **best hyperparameters** chosen on the inner loop.
+- Final summary: `ADE mean±std` and `FDE mean±std` across outer folds.
+
+### 14.4 Suggested next step: retrain with best HPs
+After nested CV identifies promising hyperparameters, update your config (e.g., `configs/traj_tptrans_base.yaml`) with the winners (e.g., `d_model`, `nhead`, `enc_layers`, `batch_size`, `lr`, `momentum` if switching to SGD) and run a longer training (e.g., `epochs: 30–50`).
+
+Example TPTrans retrain:
+```bash
+python -m src.train.train_traj --config configs/traj_tptrans_base.yaml
+```
+
+Then evaluate as usual (matching model ↔ checkpoint):
+```bash
+python -m src.eval.evaluate_traj \
+  --processed_dir data/processed/traj_w64_h12 \
+  --ckpt data/checkpoints/traj_tptrans.pt \
+  --model tptrans \
+  --plot
+```
+
+*Notes*
+- Nested CV is compute‑intensive; start with fewer folds/trials for speed, then scale up.
+- Keep `outer` folds **≥ 5** for a stable generalization estimate when dataset size allows.
+- Always use **MMSI‑grouped** splits to avoid train/test leakage across windows of the same vessel.
+
 0) Prerequisites
 	•	Python 3.11+ (3.13 works; you’re using it already)
 	•	pip (latest)
@@ -269,6 +343,46 @@ python -m src.eval.evaluate_traj \
   --ckpt data/checkpoints/traj_model.pt \
   --model tptrans \
   --plot
+```
+
+### IMPORTANT: Match checkpoint to model (GRU vs TPTrans)
+
+Use a TPTrans checkpoint with `--model tptrans`, and a GRU checkpoint with `--model gru`. Loading a GRU checkpoint into TPTrans (or vice‑versa) will raise a state_dict key/size mismatch.
+
+**TPTrans evaluation (generic TPTrans filename):**
+```bash
+python -m src.eval.evaluate_traj \
+  --processed_dir data/processed/traj_w64_h12 \
+  --ckpt data/checkpoints/traj_model.pt \
+  --model tptrans \
+  --plot
+```
+
+**TPTrans evaluation (explicit TPTrans filename):**
+```bash
+python -m src.eval.evaluate_traj \
+  --processed_dir data/processed/traj_w64_h12 \
+  --ckpt data/checkpoints/traj_tptrans.pt \
+  --model tptrans \
+  --plot
+```
+
+If your checkpoint was produced by the GRU trainer (e.g., `traj_gru_model.pt`), evaluate as GRU instead:
+```bash
+python -m src.eval.evaluate_traj \
+  --processed_dir data/processed/traj_w64_h12 \
+  --ckpt data/checkpoints/traj_model.pt \
+  --model gru \
+  --plot
+```
+
+*Tip:* If you’re unsure which model produced a checkpoint, open it and inspect the keys:
+```python
+import torch
+sd = torch.load("data/checkpoints/<file>.pt", map_location="cpu")
+print([k for k in sd.keys() if isinstance(k, str)][:10])
+# GRU-style keys often include: 'enc.weight_ih_l0', 'enc.weight_hh_l0', ...
+# TPTrans-style keys include: 'conv.net.0.weight', 'encoder.layers.0.self_attn.in_proj_weight', ...
 ```
 
 Outputs

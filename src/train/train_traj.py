@@ -75,6 +75,10 @@ def main(cfg_path: str):
         )
         model_name = "TPTrans"
 
+    # after you set model_name = "GRU" or "TPTrans"
+    ckpt_name = f"traj_{model_name.lower()}.pt"
+    best_path = out_dir / ckpt_name
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
 
@@ -85,7 +89,7 @@ def main(cfg_path: str):
     delta = float(cfg.get("huber_delta", 1.0))
 
     best_val = float("inf")
-    best_path = out_dir / "traj_model.pt"  # will hold best if val exists, else last
+    #best_path = out_dir / "traj_model.pt"  # will hold best if val exists, else last
 
     for epoch in range(1, epochs + 1):
         model.train()
