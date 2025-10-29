@@ -10,13 +10,10 @@ import pandas as pd
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from src.labeling.traj_labels import make_traj_windows
+from src.labeling.eta_labels import make_eta_windows  # <-- add this import
 
 
 def _save_scaler(X: np.ndarray, out_dir: Path):
-    """
-    Save a simple feature scaler (mean/std) computed over all time steps.
-    X is [N, T, F].
-    """
     flat = X.reshape(-1, X.shape[-1])
     mean = flat.mean(axis=0).astype("float32")
     std = flat.std(axis=0).astype("float32") + 1e-8
@@ -24,10 +21,6 @@ def _save_scaler(X: np.ndarray, out_dir: Path):
 
 
 def _save_window_mmsi(df: pd.DataFrame, window: int, horizon: int, out_dir: Path):
-    """
-    Save an array of MMSIs for each window produced by make_traj_windows.
-    Must mirror the exact windowing logic to align with X/Y.
-    """
     mmsis: list[int] = []
     for (mmsi, seg), g in df.groupby(["mmsi", "segment_id"], sort=False):
         g = g.reset_index(drop=True)
@@ -42,15 +35,8 @@ def build_traj(interim_path: Path, out_dir: Path, window: int, horizon: int, fea
 
     X, Y, meta = make_traj_windows(df, window=window, horizon=horizon, features=features)
 
-    # Save scalers and window MMSIs for MMSI-wise splitting & normalization
     if X.size > 0:
         _save_scaler(X, out_dir)
-        # --- target scaler for Y (per-dimension over all horizons) ---
-        y_flat = Y.reshape(-1, Y.shape[-1]).astype("float32")
-        y_mean = y_flat.mean(axis=0)
-        y_std  = y_flat.std(axis=0) + 1e-8
-        np.savez(out_dir / "target_scaler.npz", mean=y_mean, std=y_std)
-        # ---------------------------------------------------------------
         _save_window_mmsi(df, window=window, horizon=horizon, out_dir=out_dir)
 
     np.save(out_dir / "X.npy", X.astype("float32", copy=False))
@@ -62,40 +48,19 @@ def build_traj(interim_path: Path, out_dir: Path, window: int, horizon: int, fea
 
 
 def build_eta(interim_path: Path, out_dir: Path, window: int, features: list[str] | None):
+    """Use the robust ETA window builder (handles NaNs and dtypes)."""
     df = pd.read_parquet(interim_path)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # For demo/pipeline continuity: fabricate placeholder ETA if real labels absent
-    if "time_to_port_sec" not in df.columns:
-        df["time_to_port_sec"] = np.nan
+    X, y, meta = make_eta_windows(df, window=window, features=features)
 
-    # Ensure key feature columns exist for windows
-    df = df.dropna(subset=["dx", "dy", "dt"])
-
-    F = features or ["sog", "cog_sin", "cog_cos", "accel", "dt", "dx", "dy"]
-    Xs, ys = [], []
-    for (_, _), g in df.groupby(["mmsi", "segment_id"], sort=False):
-        g = g.reset_index(drop=True)
-        # Windows [i : i+window), label at i+window
-        # If no real ETA labels, use sum of dt over next window as pseudo-ETA
-        for i in range(len(g) - window - 1):
-            Xs.append(g.loc[i:i+window-1, F].values.astype("float32"))
-            if g["time_to_port_sec"].notna().any():
-                y = float(g.loc[i + window, "time_to_port_sec"])
-            else:
-                y = float(g.loc[i+1:i+window+1, "dt"].sum())
-            ys.append(y)
-
-    X = np.stack(Xs, axis=0).astype("float32") if Xs else np.empty((0, window, len(F)), dtype="float32")
-    y = np.array(ys, dtype="float32") if ys else np.empty((0,), dtype="float32")
-
-    # Save a scaler for ETA features too (helps trainers)
     if X.size > 0:
         _save_scaler(X, out_dir)
 
-    np.save(out_dir / "X.npy", X)
-    np.save(out_dir / "y_eta.npy", y)
-    (out_dir / "meta.json").write_text(json_dumps({"features": F, "window": window}))
+    np.save(out_dir / "X.npy", X.astype("float32", copy=False))
+    np.save(out_dir / "y_eta.npy", y.astype("float32", copy=False))
+    (out_dir / "meta.json").write_text(json_dumps({"features": meta.get("features", features),
+                                                   "window": window}))
     print(f"[eta] Saved X.npy {X.shape}, y_eta.npy {y.shape} to {out_dir}")
 
 
@@ -107,12 +72,6 @@ def build_anom(interim_path: Path, out_dir: Path, window: int, horizon: int, fea
 
     if X.size > 0:
         _save_scaler(X, out_dir)
-        # --- target scaler for Y ---
-        y_flat = Y.reshape(-1, Y.shape[-1]).astype("float32")
-        y_mean = y_flat.mean(axis=0)
-        y_std  = y_flat.std(axis=0) + 1e-8
-        np.savez(out_dir / "target_scaler.npz", mean=y_mean, std=y_std)
-        # --------------------------------
         _save_window_mmsi(df, window=window, horizon=horizon, out_dir=out_dir)
 
     np.save(out_dir / "X.npy", X.astype("float32", copy=False))

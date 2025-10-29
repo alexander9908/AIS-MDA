@@ -12,6 +12,9 @@ shapely
 geopandas
 h3
 
+# Parallel helpers
+pandarallel
+
 # Deep learning
 torch
 torchvision

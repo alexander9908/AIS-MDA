@@ -1,3 +1,13 @@
 .venv/
 test
 data/AIS-data
+data/raw/*.csv
+data/interim/*.parquet
+data/interim/
+# Ignore entire raw data folder (keep local copies but stop tracking)
+data/raw/
+data/figures/*.png
+data/processed/
+.DS_Store
+# Ignore all data (keep local copies but stop tracking)
+data/

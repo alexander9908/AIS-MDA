@@ -2,6 +2,6 @@
   "task": "trajectory",
   "model": "tptrans",
   "ckpt": "data/checkpoints/traj_tptrans.pt",
-  "ade": 41.48384094238281,
-  "fde": 41.60839080810547
+  "ade": 41.49778747558594,
+  "fde": 41.603782653808594
 }
