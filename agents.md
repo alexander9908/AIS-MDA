@@ -144,6 +144,8 @@ python -m src.eval.evaluate_traj \
   - Update or create READMEs for new modules or scripts.
   - Record data assumptions, config changes, and CLI usage.
   - Store metrics via existing JSON/figure conventions.
+- **Dependencies:**
+  - Add any new third-party packages to `env/requirements.txt` and confirm installation instructions remain accurate.
 
 ## AI Contribution Checklist
 - Confirm preprocessing compatibility with MapReduce pipeline and `make_*` scripts.
