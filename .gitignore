@@ -9,5 +9,7 @@ data/processed/
 .DS_Store
 # Ignore all data (keep local copies but stop tracking)
 data/
+.venv
+*.pyc
 
-.DS_Store/
+.python-version
