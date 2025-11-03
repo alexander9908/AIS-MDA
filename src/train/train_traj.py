@@ -5,10 +5,10 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset, random_split
+from src.utils.datasets import AISDataset
 
 from ..config import load_config
 from ..models import GRUSeq2Seq, TPTrans
-
 
 def huber_loss(pred, target, delta: float = 1.0):
     # SmoothL1Loss uses 'beta' as the Huber delta
@@ -18,43 +18,19 @@ def huber_loss(pred, target, delta: float = 1.0):
 def main(cfg_path: str):
     cfg = load_config(cfg_path)
 
-    processed = Path(cfg.get("processed_dir", "data/processed/traj_w64_h12"))
+    preprocessed_dataset_dir = cfg.get('processed_dir')
     out_dir = Path(cfg.get("out_dir", "data/checkpoints"))
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # -------- Load arrays (NumPy first) --------
-    X = np.load(processed / "X.npy")  # [N, T, F]
-    Y = np.load(processed / "Y.npy")  # [N, H, 2]
-
-    # Optional normalization (created by make_processed.py if you add it)
-    scaler = processed / "scaler.npz"
-    if scaler.exists():
-        s = np.load(scaler)
-        mean, std = s["mean"], s["std"]
-        X = (X - mean) / (std + 1e-8)
-
-    # -> tensors
-    X = torch.from_numpy(X).float()
-    Y = torch.from_numpy(Y).float()
-
-    ds = TensorDataset(X, Y)
-
-    # Optional train/val split (controlled via config: val_frac)
-    val_frac = float(cfg.get("val_frac", 0.0))
-    if 0.0 < val_frac < 1.0 and len(ds) > 1:
-        n_val = max(1, int(len(ds) * val_frac))
-        n_train = len(ds) - n_val
-        ds_train, ds_val = random_split(ds, [n_train, n_val], generator=torch.Generator().manual_seed(42))
-        has_val = True
-    else:
-        ds_train, ds_val = ds, None
-        has_val = False
+    ds_train = AISDataset(preprocessed_dataset_dir + "train", max_seqlen=96)
+    ds_val = AISDataset(preprocessed_dataset_dir + "val", max_seqlen=96)
+    has_val = True
 
     dl_train = DataLoader(ds_train, batch_size=int(cfg.get("batch_size", 128)), shuffle=True, num_workers=0, pin_memory=True)
     dl_val = DataLoader(ds_val, batch_size=int(cfg.get("batch_size", 128)), shuffle=False, num_workers=0, pin_memory=True) if has_val else None
-
-    feat_dim = X.shape[-1]
-    horizon = Y.shape[1]
+    
+    feat_dim = ds_train[0][0].shape[-1]
+    horizon = cfg.get("horizon", 12)
 
     if cfg["model"]["name"] == "gru":
         model = GRUSeq2Seq(

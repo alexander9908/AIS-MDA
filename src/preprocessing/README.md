@@ -35,5 +35,16 @@ A single sample has the format:
 ```
 inspired by [CIA-Oceanix/TrAISformer](https://github.com/CIA-Oceanix/TrAISformer/).
 
+Columns: LAT, LON, SOG, COG, HEADING, ROT, NAV_STT, TIMESTAMP, MMSI
+
 ## Step 3: Train test split
-TODO
+
+Split the preprocessed data into training, validation, and test sets. Using MMSI-aware splitting to prevent data leakage by keeping all tracks from the same vessel in the same partition.
+
+Run:
+```bash
+python -m src.preprocessing.train_test_split --data_dir FINAL_DIR --val_size 0.1 --test_size 0.1 --random_state 42
+```
+
+This creates three subdirectories (`train/`, `val/`, and `test/`) within `FINAL_DIR`.
+

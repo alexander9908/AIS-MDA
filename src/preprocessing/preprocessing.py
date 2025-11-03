@@ -143,3 +143,14 @@ def process_single_mmsi_track(mmsi: int, track_data: np.ndarray) -> dict:
         v[:,COG] = v[:,COG]/360.0
     
     return Data
+
+def de_normalize_track(track: np.ndarray) -> np.ndarray:
+    """Denormalizes a single track."""
+    denorm_track = copy.deepcopy(track)
+
+    denorm_track[:, LAT] = denorm_track[:, LAT] * (LAT_MAX - LAT_MIN) + LAT_MIN
+    denorm_track[:, LON] = denorm_track[:, LON] * (LON_MAX - LON_MIN) + LON_MIN
+    denorm_track[:, SOG] = denorm_track[:, SOG] * SPEED_MAX
+    denorm_track[:, COG] = denorm_track[:, COG] * 360.0
+    
+    return denorm_track
