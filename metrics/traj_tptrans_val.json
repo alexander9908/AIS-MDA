@@ -1,0 +1,9 @@
+{
+  "task": "trajectory",
+  "model": "tptrans",
+  "split": "data\\map_reduced\\val",
+  "ckpt": "data/checkpoints/traj_tptrans.pt",
+  "ade": 0.18166770040988922,
+  "fde": 0.25550320744514465,
+  "count": 77
+}
