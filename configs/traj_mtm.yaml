@@ -1,0 +1,30 @@
+task: mtm
+final_dir: data/map_reduce_final
+out_dir: data/checkpoints
+window: 64
+batch_size: 128
+epochs: 5
+lr: 0.0003
+
+model:
+  d_model: 192
+  nhead: 4
+  enc_layers: 4
+
+mask:
+  ratio: 0.12
+  span_len: 1
+  noise_std: 0.0
+
+loss:
+  lambda_spatial: 1.0
+  lambda_kin: 1.0
+
+denorm:
+  lat_min: 54.0
+  lat_max: 58.0
+  lon_min: 6.0
+  lon_max: 16.0
+  speed_max: 30.0
+
+

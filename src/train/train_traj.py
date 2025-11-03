@@ -58,6 +58,26 @@ def main(cfg_path: str):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
 
+    # Optional: load MTM-pretrained encoder weights for TPTrans
+    pretrained_mtm = cfg.get("pretrained_mtm", None)
+    if pretrained_mtm and isinstance(model, TPTrans):
+        try:
+            mtm_state = torch.load(pretrained_mtm, map_location="cpu")
+            model_state = model.state_dict()
+            loadable = {k: v for k, v in mtm_state.items() if k in model_state and v.shape == model_state[k].shape}
+            if loadable:
+                model_state.update(loadable)
+                model.load_state_dict(model_state)
+                print(f"[mtm] Loaded {len(loadable)} matching layers from {pretrained_mtm}:")
+                for k in loadable.keys():
+                    print(f"  ✓ {k}")
+            else:
+                print(f"[mtm] No matching layers found in {pretrained_mtm}; skipping preload")
+                print(f"  MTM keys: {list(mtm_state.keys())[:5]}...")
+                print(f"  Model keys: {list(model_state.keys())[:10]}...")
+        except Exception as e:
+            print(f"[mtm] Failed to load pretrained MTM weights from {pretrained_mtm}: {e}")
+
     opt = torch.optim.AdamW(model.parameters(), lr=float(cfg.get("lr", 3e-4)))
     scaler_amp = torch.cuda.amp.GradScaler(enabled=torch.cuda.is_available())
     epochs = int(cfg.get("epochs", 5))

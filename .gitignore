@@ -14,3 +14,4 @@ data/
 
 .python-version
 locals/*
+src/eval/README_MTM.md
