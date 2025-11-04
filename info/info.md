@@ -13,6 +13,10 @@
 - Remove abnormal messages if speed is above 40 knots (calculated from dist and time)
 - long voyages gets split (voyage > 20 hours)
 
+## max long, lat
+- Long <
+- Lat < 
+
 
 ## Features in df
 Columns: LAT, LON, SOG, COG, HEADING, ROT, NAV_STT, TIMESTAMP, MMSI
