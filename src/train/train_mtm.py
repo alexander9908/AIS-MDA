@@ -90,9 +90,23 @@ def torch_haversine_m(lat1_deg: torch.Tensor, lon1_deg: torch.Tensor, lat2_deg: 
     return R * c
 
 
-def compute_mtm_loss(pred: torch.Tensor, true: torch.Tensor, mask_time: torch.Tensor,
-                     lat_min: float, lat_max: float, lon_min: float, lon_max: float,
-                     speed_max: float, lambda_spatial: float = 1.0, lambda_kin: float = 1.0) -> torch.Tensor:
+def compute_mtm_loss_mse(pred: torch.Tensor, true: torch.Tensor, mask_time: torch.Tensor) -> torch.Tensor:
+    """Simple MSE loss on masked positions (in normalized space)."""
+    m = mask_time  # [B,T]
+    if m.any():
+        # Expand mask to all channels
+        m_expanded = m.unsqueeze(-1).expand_as(pred)  # [B,T,4]
+        # Compute MSE only on masked positions
+        mse = ((pred[m_expanded] - true[m_expanded]) ** 2).mean()
+        return mse
+    else:
+        return torch.zeros((), device=pred.device)
+
+
+def compute_mtm_loss_haversine(pred: torch.Tensor, true: torch.Tensor, mask_time: torch.Tensor,
+                                lat_min: float, lat_max: float, lon_min: float, lon_max: float,
+                                speed_max: float, lambda_spatial: float = 1.0, lambda_kin: float = 1.0) -> torch.Tensor:
+    """Physically-meaningful loss using haversine distance + kinematic errors."""
     # pred/true in normalized space, channels [lon, lat, sog, cog]
     lon_p, lat_p, sog_p, cog_p = pred[..., 0], pred[..., 1], pred[..., 2], pred[..., 3]
     lon_t, lat_t, sog_t, cog_t = true[..., 0], true[..., 1], true[..., 2], true[..., 3]
@@ -141,6 +155,8 @@ def main():
     ap.add_argument("--noise_std", type=float, default=0.0)
     ap.add_argument("--lambda_spatial", type=float, default=1.0)
     ap.add_argument("--lambda_kin", type=float, default=1.0)
+    ap.add_argument("--loss_type", type=str, default="haversine", choices=["mse", "haversine"],
+                   help="Loss function: 'mse' for simple MSE, 'haversine' for physically-meaningful loss")
     # geodesic/denorm constants from preprocessing
     ap.add_argument("--lat_min", type=float, default=54.0)
     ap.add_argument("--lat_max", type=float, default=58.0)
@@ -164,6 +180,8 @@ def main():
     out_dir = Path(args.out_dir); out_dir.mkdir(parents=True, exist_ok=True)
     ckpt = out_dir / "traj_mtm.pt"
 
+    print(f"[MTM] Using loss function: {args.loss_type}")
+    
     model.train()
     for epoch in range(1, args.epochs + 1):
         total = 0.0
@@ -177,11 +195,16 @@ def main():
             opt.zero_grad(set_to_none=True)
             with torch.cuda.amp.autocast(enabled=torch.cuda.is_available()):
                 pred = model(x_masked)
-                loss = compute_mtm_loss(pred, xb, mask_time,
-                                        lat_min=args.lat_min, lat_max=args.lat_max,
-                                        lon_min=args.lon_min, lon_max=args.lon_max,
-                                        speed_max=args.speed_max,
-                                        lambda_spatial=args.lambda_spatial, lambda_kin=args.lambda_kin)
+                
+                # Choose loss function
+                if args.loss_type == "mse":
+                    loss = compute_mtm_loss_mse(pred, xb, mask_time)
+                else:  # haversine
+                    loss = compute_mtm_loss_haversine(pred, xb, mask_time,
+                                                     lat_min=args.lat_min, lat_max=args.lat_max,
+                                                     lon_min=args.lon_min, lon_max=args.lon_max,
+                                                     speed_max=args.speed_max,
+                                                     lambda_spatial=args.lambda_spatial, lambda_kin=args.lambda_kin)
             scaler.scale(loss).backward()
             scaler.step(opt)
             scaler.update()

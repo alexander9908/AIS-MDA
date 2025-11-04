@@ -17,6 +17,7 @@ mask:
   noise_std: 0.0
 
 loss:
+  type: mse        # Options: "mse" or "haversine"
   lambda_spatial: 1.0
   lambda_kin: 1.0
 
