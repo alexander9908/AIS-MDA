@@ -42,11 +42,6 @@ class CustomLogger:
         handler.setFormatter(formatter)
         self.logger.addHandler(handler)
         
-        
-    def _log(self, message: str):
-        """Log a message to the terminal and WandB."""
-        print(message)
-        
     def info(self, message: str):
         """Log an info message to the terminal and WandB."""
         self.logger.info(message)
@@ -86,6 +81,16 @@ class CustomLogger:
     def tqdm(self, iterable, **tqdm_kwargs):
         """Wrap an iterable with tqdm for progress tracking."""
         return Customtqdm(iterable, **tqdm_kwargs)
+    
+    def artifact(self, artifact, name: str, type: str):
+        """Log an artifact to WandB."""
+        wandb_artifact = wandb.Artifact(name, type=type)
+        wandb_artifact.add_file(artifact)
+        self.run.log_artifact(wandb_artifact)
+        
+    def add_tags(self, tags: list):
+        """Add tags to the WandB run."""
+        self.run.tags = self.run.tags + tuple(tags)
         
 class TqdmToNull:
     """A file-like object that silently discards any writes."""
