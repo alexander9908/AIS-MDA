@@ -18,13 +18,7 @@ from tqdm import tqdm as tqdm
 import polars as pl
 import argparse
 from collections import Counter
-
-LON_MIN = 6.0
-LON_MAX = 16.0
-LAT_MIN = 54.0
-LAT_MAX = 58.0
-
-SOG_MAX = 30.0  # the SOG is truncated to 30.0 knots max.
+from src.preprocessing.preprocessing import LON_MIN, LON_MAX, LAT_MIN, LAT_MAX, SPEED_MAX as SOG_MAX
 
 LAT, LON, SOG, COG, HEADING, ROT, NAV_STT, TIMESTAMP, MMSI, SHIPTYPE  = list(range(10))
 
@@ -109,7 +103,10 @@ def process_single_csv(csv_filename,
     
     l_l_msg = [] # list of AIS messages, each row is a message (list of AIS attributes)
     data_path = os.path.join(input_dir, csv_filename)
-    with open(data_path,"r") as f:
+    
+    BUFFER_SIZE = 8 * 1024 * 1024  # 8MB buffer
+    
+    with open(data_path,"r", buffering=BUFFER_SIZE) as f:
         tqdm.write(f"Reading {csv_filename} ...")
         csvReader = csv.reader(f)
         next(csvReader) # skip the legend row

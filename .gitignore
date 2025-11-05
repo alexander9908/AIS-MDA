@@ -15,3 +15,5 @@ data/
 .python-version
 locals/*
 TEMP_DIR/
+hpc_jobs/logs/*
+wandb/

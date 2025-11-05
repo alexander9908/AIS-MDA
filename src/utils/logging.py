@@ -1,0 +1,95 @@
+# This script implements a custom Logger class logging to WandB and the terminal.
+
+import wandb
+import os
+from tqdm import tqdm
+import logging
+import sys
+import traceback
+
+def running_on_hpc():
+    hpc_env_vars = [
+        "SLURM_JOB_ID",     # SLURM scheduler
+        "LSB_JOBID",        # LSF scheduler
+        "PBS_JOBID",        # PBS/Torque
+        "SGE_JOB_ID",       # Sun Grid Engine
+    ]
+    return any(var in os.environ for var in hpc_env_vars)
+
+class Customtqdm(tqdm):
+    """
+    A wrapper for tqdm
+    """
+    if running_on_hpc():
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs, file=TqdmToNull())
+    else:
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+
+class CustomLogger:
+    def __init__(self, project_name, run_name=None):
+        self.run = wandb.init(project=project_name, name=run_name)
+        
+        # Set up terminal logger
+        self.logger = logging.getLogger("custom_logger")
+        self.logger.setLevel(logging.DEBUG)
+        if self.logger.hasHandlers(): # Clear existing handlers
+            self.logger.handlers.clear()
+        self.logger.propagate = False
+        handler = logging.StreamHandler(sys.stdout)
+        formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+        handler.setFormatter(formatter)
+        self.logger.addHandler(handler)
+        
+        
+    def _log(self, message: str):
+        """Log a message to the terminal and WandB."""
+        print(message)
+        
+    def info(self, message: str):
+        """Log an info message to the terminal and WandB."""
+        self.logger.info(message)
+        
+    def warning(self, message: str):
+        """Log a warning message to the terminal and WandB."""
+        self.logger.warning(message)
+        
+    def error(self, message: str, exception: Exception = None):
+        """Log an error message with traceback to the terminal and WandB."""
+        if exception:
+            tb_str = "".join(traceback.format_exception(type(exception), exception, exception.__traceback__))
+            self.logger.error(f"{message}\n{tb_str}")
+            self.run.alert(title="Error", text=f"{message}\n\n{tb_str}")
+            raise exception
+        else:
+            tb_str = traceback.format_exc()
+            self.logger.error(f"{message}\n{tb_str}")
+            self.run.alert(title="Error", text=f"{message}\n\n{tb_str}")
+            raise Exception(message)
+        
+    def log_metrics(self, metrics: dict, step: int = None):
+        """Log a dictionary of metrics to WandB."""
+        if step is not None:
+            self.run.log(metrics, step=step)
+        else:
+            self.run.log(metrics)
+        
+    def log_config(self, config: dict):
+        """Log configuration parameters to WandB."""
+        self.run.config.update(config)
+        
+    def finish(self):
+        """Finish the WandB run."""
+        self.run.finish()
+        
+    def tqdm(self, iterable, **tqdm_kwargs):
+        """Wrap an iterable with tqdm for progress tracking."""
+        return Customtqdm(iterable, **tqdm_kwargs)
+        
+class TqdmToNull:
+    """A file-like object that silently discards any writes."""
+    def write(self, x):
+        pass # Ignore the output
+    def flush(self):
+        pass

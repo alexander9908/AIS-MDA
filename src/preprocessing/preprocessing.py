@@ -23,11 +23,10 @@ from io import StringIO
 from tqdm import tqdm
 import argparse
 
-# ## aisdk-2025-02-27
-LON_MIN = 6.0
-LON_MAX = 16.0
+LON_MIN = 5.0
+LON_MAX = 17.0
 LAT_MIN = 54.0
-LAT_MAX = 58.0
+LAT_MAX = 59.0
 
 LAT_RANGE = LAT_MAX - LAT_MIN
 LON_RANGE = LON_MAX - LON_MIN
