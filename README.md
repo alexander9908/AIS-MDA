@@ -146,6 +146,39 @@ ais-mda/
 - Show horizon-based accuracy decay.
 - Plot ETA error distributions.
 
+#### Trajectory Evaluation Plots
+
+Use the dedicated evaluation helper to score checkpoints and generate Europe-context plots:
+
+- auto-zoom on actual (recommended):
+```bash
+python -m src.eval.eval_traj_newnewnew \
+  --split_dir data/map_reduced/val \
+  --ckpt data/checkpoints/traj_tptrans.pt \
+  --model tptrans \
+  --lat_idx 0 --lon_idx 1 \
+  --y_order latlon \
+  --past_len 64 --max_plots 8 \
+  --out_dir data/figures \
+  --auto_extent --extent_source actual --extent_outlier_sigma 3.0 \
+  --denorm --lat_min 54 --lat_max 58 --lon_min 6 --lon_max 16
+```
+- full Europe view:
+```bash
+python -m src.eval.eval_traj_newnewnew \
+  --split_dir data/map_reduced/val \
+  --ckpt data/checkpoints/traj_tptrans.pt \
+  --model tptrans \
+  --lat_idx 0 --lon_idx 1 \
+  --y_order latlon \
+  --past_len 64 --max_plots 8 \
+  --out_dir data/figures \
+  --denorm --lat_min 54 --lat_max 58 --lon_min 6 --lon_max 16
+```
+
+displays a full plot of the true past path, true future path and the predicted future path.
+
+
 ---
 
 ## 🚀 Quickstart
@@ -357,4 +390,3 @@ Author: Group 11 — 2025
 Location: Copenhagen, Denmark
 
 ---
-

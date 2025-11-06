@@ -1,18 +1,11 @@
 # src/eval/eval_traj_newnewnew.py
 from __future__ import annotations
-import argparse, json, os, csv, sys, glob, pickle, datetime as dt
+import argparse, json, os, csv, datetime as dt
 from pathlib import Path
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
 from typing import Iterable, Optional, Sequence, Tuple
-import matplotlib.pyplot as plt
-try:
-    import cartopy.crs as ccrs
-    import cartopy.feature as cfeature
-    _HAS_CARTOPY = True
-except Exception:
-    _HAS_CARTOPY = False
 
 from ..models import GRUSeq2Seq, TPTrans
 from ..utils.datasets import AISDataset
@@ -25,8 +18,7 @@ try:
 except Exception:
     _HAS_DENORM_FN = False
 
-# Denmark default extent (lon_min, lon_max, lat_min, lat_max)
-DEFAULT_DENMARK_EXTENT: Tuple[float, float, float, float] = (6.0, 16.0, 54.0, 58.0)
+DEFAULT_EUROPE_EXTENT: Tuple[float, float, float, float] = (-25.0, 45.0, 30.0, 72.0)
 
 # Try to import normalization bounds from the preprocessing pipeline.
 _DEFAULT_LAT_MIN = None
@@ -64,68 +56,12 @@ def haversine_km(lat1, lon1, lat2, lon2) -> float:
     return float(2*R*np.arcsin(np.sqrt(a)))
 
 
-def to_lonlat(arr: np.ndarray, lat_i: int, lon_i: int) -> Tuple[np.ndarray, np.ndarray]:
-    return arr[:, lon_i], arr[:, lat_i]
-
-
-def build_denmark_axes(auto_extent: bool,
-                       extent_source_points: Optional[np.ndarray],
-                       sigma: float,
-                       figsize: Tuple[float, float] = (10, 6)):
-    if _HAS_CARTOPY:
-        proj = ccrs.PlateCarree()
-        fig, ax = plt.subplots(figsize=figsize, subplot_kw={"projection": proj})
-        try:
-            ax.add_feature(cfeature.OCEAN, zorder=0)
-            ax.add_feature(cfeature.LAND, facecolor="0.92", zorder=1)
-            ax.add_feature(cfeature.COASTLINE, linewidth=0.6, zorder=2)
-            ax.add_feature(cfeature.BORDERS, linewidth=0.5, zorder=2)
-        except Exception as e:
-            print(f"[warn] cartopy features failed: {e}; using coastlines only")
-            ax.coastlines(resolution="50m", linewidth=0.6)
-        try:
-            gl = ax.gridlines(draw_labels=True, linewidth=0.3, alpha=0.5)
-            gl.top_labels = False; gl.right_labels = False
-        except Exception as e:
-            print(f"[warn] gridlines failed: {e}")
-
-        if auto_extent and extent_source_points is not None and len(extent_source_points) > 0:
-            pts = np.asarray(extent_source_points, dtype=float)
-            lon = pts[:, 0]; lat = pts[:, 1]
-            m_lon, s_lon = float(np.nanmean(lon)), float(np.nanstd(lon))
-            m_lat, s_lat = float(np.nanmean(lat)), float(np.nanstd(lat))
-            lon_min, lon_max = m_lon - sigma * s_lon, m_lon + sigma * s_lon
-            lat_min, lat_max = m_lat - sigma * s_lat, m_lat + sigma * s_lat
-            lon_min = max(lon_min, DEFAULT_DENMARK_EXTENT[0]); lon_max = min(lon_max, DEFAULT_DENMARK_EXTENT[1])
-            lat_min = max(lat_min, DEFAULT_DENMARK_EXTENT[2]); lat_max = min(lat_max, DEFAULT_DENMARK_EXTENT[3])
-            ax.set_extent([lon_min, lon_max, lat_min, lat_max], crs=proj)
-        else:
-            ax.set_extent(DEFAULT_DENMARK_EXTENT, crs=proj)
-        return fig, ax, proj
-    else:
-        fig, ax = plt.subplots(figsize=figsize)
-        if auto_extent and extent_source_points is not None and len(extent_source_points) > 0:
-            pts = np.asarray(extent_source_points, dtype=float)
-            lon = pts[:, 0]; lat = pts[:, 1]
-            m_lon, s_lon = float(np.nanmean(lon)), float(np.nanstd(lon))
-            m_lat, s_lat = float(np.nanmean(lat)), float(np.nanstd(lat))
-            lon_min, lon_max = m_lon - sigma * s_lon, m_lon + sigma * s_lon
-            lat_min, lat_max = m_lat - sigma * s_lat, m_lat + sigma * s_lat
-            lon_min = max(lon_min, DEFAULT_DENMARK_EXTENT[0]); lon_max = min(lon_max, DEFAULT_DENMARK_EXTENT[1])
-            lat_min = max(lat_min, DEFAULT_DENMARK_EXTENT[2]); lat_max = min(lat_max, DEFAULT_DENMARK_EXTENT[3])
-            ax.set_xlim(lon_min, lon_max); ax.set_ylim(lat_min, lat_max)
-        else:
-            ax.set_xlim(DEFAULT_DENMARK_EXTENT[0], DEFAULT_DENMARK_EXTENT[1])
-            ax.set_ylim(DEFAULT_DENMARK_EXTENT[2], DEFAULT_DENMARK_EXTENT[3])
-        return fig, ax, None
-
-
 def to_iso(ts: float, fmt: str = "%Y-%m-%d %H:%M:%S UTC") -> str:
-    return dt.datetime.fromtimestamp(float(ts), dt.timezone.utc).strftime(fmt)
+    return dt.datetime.utcfromtimestamp(float(ts)).strftime(fmt)
 
 
 def fname_ts(ts: float) -> str:
-    return dt.datetime.fromtimestamp(float(ts), dt.timezone.utc).strftime("%Y-%m-%dT%H%M%SZ")
+    return dt.datetime.utcfromtimestamp(float(ts)).strftime("%Y-%m-%dT%H%M%SZ")
 
 
 def extract_id_and_span(arrays: Sequence[np.ndarray], idx_timestamp: int = 7, idx_mmsi: int = 8) -> Tuple[int, float, float]:
@@ -139,347 +75,6 @@ def extract_id_and_span(arrays: Sequence[np.ndarray], idx_timestamp: int = 7, id
     mmsi = int(vals[np.argmax(counts)])
     t_start = float(np.nanmin(ts)); t_end = float(np.nanmax(ts))
     return mmsi, t_start, t_end
-
-
-def parse_trip(fname: str) -> Tuple[int, int]:
-    base = os.path.basename(fname).replace("_processed.pkl", "")
-    mmsi_str, trip_id_str = base.split("_", 1)
-    return int(mmsi_str), int(trip_id_str)
-
-
-def load_trip(path: str, min_points: int = 30) -> np.ndarray:
-    with open(path, "rb") as f:
-        data = pickle.load(f)
-    # Accept either dict with 'traj' or array directly
-    trip = data["traj"] if isinstance(data, dict) and "traj" in data else np.asarray(data)
-    trip = np.asarray(trip)
-    if len(trip) < int(min_points):
-        raise ValueError(f"too short: {len(trip)} points")
-    ts = trip[:, 7]
-    if not np.all(ts[:-1] <= ts[1:]):
-        order = np.argsort(ts)
-        trip = trip[order]
-    return trip
-
-
-def split_by_percent(trip: np.ndarray, pct: float) -> Tuple[np.ndarray, np.ndarray, int]:
-    n = len(trip)
-    cut = max(1, min(n - 2, int(round(n * pct / 100.0))))
-    past = trip[:cut]
-    future_true = trip[cut:]
-    return past, future_true, cut
-
-
-def evaluate_and_plot_trip(
-    fpath: str,
-    trip: np.ndarray,
-    model,
-    args,
-    out_root: Path,
-    basemap,
-    proj,
-    sample_idx: int,
-):
-    # Trip columns: [lat, lon, sog, cog, heading, rot, nav, timestamp, mmsi]
-    mmsi, tid = parse_trip(fpath)
-
-    n_total = len(trip)
-    # Decide cut: either pred_cut percent, or past_len window
-    if args.pred_cut is not None:
-        past, fut_true, cut = split_by_percent(trip, args.pred_cut)
-    else:
-        cut = min(args.past_len, n_total - 2)
-        past = trip[:cut]
-        fut_true = trip[cut:]
-
-    # Cap future length and model horizon
-    fut_len = len(fut_true)
-    horizon = getattr(model, 'horizon', fut_len)
-    steps = fut_len
-    if args.cap_future is not None:
-        steps = min(steps, int(args.cap_future))
-    steps = min(steps, int(horizon))
-    if steps < 1:
-        raise ValueError("no future steps to predict after cap/horizon")
-
-    # Denormalize full trip for plotting, and extract segments in degrees
-    full_dn = maybe_denorm(trip.copy(), lat_idx=0, lon_idx=1, name="full_trip",
-                           lat_min=args.lat_min, lat_max=args.lat_max, lon_min=args.lon_min, lon_max=args.lon_max)
-    lats_full = full_dn[:, 0]; lons_full = full_dn[:, 1]
-    lats_past = lats_full[:cut]; lons_past = lons_full[:cut]
-    lats_true = lats_full[cut:cut+steps]; lons_true = lons_full[cut:cut+steps]
-
-    # Current point (degrees) — last past sample (immutable reference)
-    past_last_lat = float(lats_past[-1]); past_last_lon = float(lons_past[-1])
-    cur_lat = past_last_lat; cur_lon = past_last_lon
-
-    # Helpers for normalization conversions
-    def deg_to_norm(lat_deg: np.ndarray, lon_deg: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-        la_min, la_max = args.lat_min, args.lat_max
-        lo_min, lo_max = args.lon_min, args.lon_max
-        if None in (la_min, la_max, lo_min, lo_max):
-            raise ValueError("deg_to_norm requires --lat_min/--lat_max/--lon_min/--lon_max bounds when --denorm is used.")
-        lat_norm = (lat_deg - la_min) / float(la_max - la_min)
-        lon_norm = (lon_deg - lo_min) / float(lo_max - lo_min)
-        return lat_norm, lon_norm
-
-    # Iterative rollout or single-shot
-    # Slice to same feature dimension as training (lat, lon, sog, cog)
-    seq_in = past[:, :4].astype(np.float32)
-
-    # Normalize inputs if they look like degrees; otherwise assume already normalized
-    def looks_norm_latlon(lat_col, lon_col):
-        return (np.nanmin(lat_col) >= -0.05 and np.nanmax(lat_col) <= 1.2 and
-                np.nanmin(lon_col) >= -0.05 and np.nanmax(lon_col) <= 1.2)
-
-    if looks_norm_latlon(seq_in[:, 0], seq_in[:, 1]):
-        seq_norm = seq_in
-    else:
-        la_min, la_max = args.lat_min, args.lat_max
-        lo_min, lo_max = args.lon_min, args.lon_max
-        if None in (la_min, la_max, lo_min, lo_max):
-            raise ValueError("Inputs appear denormalized; provide --lat_min/--lat_max/--lon_min/--lon_max for normalization.")
-        seq_norm = seq_in.copy()
-        seq_norm[:, 0] = (seq_in[:, 0] - la_min) / float(la_max - la_min)
-        seq_norm[:, 1] = (seq_in[:, 1] - lo_min) / float(lo_max - lo_min)
-        try:
-            from ..preprocessing.preprocessing import SPEED_MAX  # type: ignore
-            speed_max = float(SPEED_MAX)
-        except Exception:
-            speed_max = 30.0
-        seq_norm[:, 2] = np.clip(seq_in[:, 2] / float(speed_max), 0.0, 1.0)
-        seq_norm[:, 3] = (seq_in[:, 3] % 360.0) / 360.0
-
-    last_sog = seq_norm[-1, 2] if seq_norm.shape[1] > 2 else 0.0
-    last_cog = seq_norm[-1, 3] if seq_norm.shape[1] > 3 else 0.0
-
-    print(f"[dbg] order={args.y_order} lat_idx={args.lat_idx} lon_idx={args.lon_idx}")
-    print(f"[debug] model horizon={getattr(model,'horizon',None)} past_len={args.past_len} input_seq_shape={seq_norm.shape}")
-    pred_lat_list: list[float] = []
-    pred_lon_list: list[float] = []
-
-    remaining = steps
-    while remaining > 0:
-        Tin = min(args.past_len, len(seq_norm))
-        X_in = seq_norm[-Tin:, :][None, ...]
-        with torch.no_grad():
-            xb = torch.from_numpy(X_in).to(next(model.parameters()).device)
-            ypred_raw = model(xb)[0].cpu().numpy()  # [H,2]
-
-        # Align to (lat,lon) order
-        if args.y_order == 'lonlat':
-            pred_lat_norm = ypred_raw[:, 1]
-            pred_lon_norm = ypred_raw[:, 0]
-        else:
-            pred_lat_norm = ypred_raw[:, 0]
-            pred_lon_norm = ypred_raw[:, 1]
-        # Clamp absolutes to [0,1] before de-normalization (stability)
-        pred_lat_norm = np.clip(pred_lat_norm, 0.0, 1.0)
-        pred_lon_norm = np.clip(pred_lon_norm, 0.0, 1.0)
-
-        # Number of steps to keep this iter
-        keep = min(len(pred_lat_norm), remaining)
-        pred_lat_norm = pred_lat_norm[:keep]
-        pred_lon_norm = pred_lon_norm[:keep]
-
-        # Convert to degrees; handle deltas or absolute
-        pred_is_delta = args.pred_is_delta or (getattr(args, 'pred_mode', 'absolute') == 'delta')
-        if pred_is_delta:
-            # Scale deltas to degrees then anchor+cumsum
-            dlat_deg, dlon_deg = maybe_denorm_deltas(pred_lat_norm, pred_lon_norm,
-                                                     lat_min=args.lat_min, lat_max=args.lat_max,
-                                                     lon_min=args.lon_min, lon_max=args.lon_max)
-            seg_lat = cur_lat + np.cumsum(dlat_deg)
-            seg_lon = cur_lon + np.cumsum(dlon_deg)
-        else:
-            # Absolute normalized → degrees, then anchor if needed
-            pred_track = np.stack([pred_lat_norm, pred_lon_norm], axis=1)
-            pred_track = maybe_denorm(pred_track, lat_idx=0, lon_idx=1, name="pred_iter",
-                                      lat_min=args.lat_min, lat_max=args.lat_max, lon_min=args.lon_min, lon_max=args.lon_max)
-            seg_lat = pred_track[:, 0]
-            seg_lon = pred_track[:, 1]
-            if args.anchor_pred and np.isfinite(seg_lat[0]) and np.isfinite(seg_lon[0]):
-                # Always anchor first point to current past; then guardrail check
-                dlat0 = cur_lat - float(seg_lat[0]); dlon0 = cur_lon - float(seg_lon[0])
-                seg_lat = seg_lat + dlat0
-                seg_lon = seg_lon + dlon0
-                d0 = haversine_km(cur_lat, cur_lon, float(seg_lat[0]), float(seg_lon[0]))
-                if d0 > 0.5:
-                    print(f"[warn] large first_pred jump after anchoring: {d0:.2f} km")
-
-        # Append to overall preds and update state
-        pred_lat_list.extend(seg_lat.tolist())
-        pred_lon_list.extend(seg_lon.tolist())
-        cur_lat = pred_lat_list[-1]
-        cur_lon = pred_lon_list[-1]
-
-        # Update normalized sequence for next iteration using converted normalized absolutes
-        add_lat_norm, add_lon_norm = deg_to_norm(np.asarray(seg_lat), np.asarray(seg_lon))
-        add_feats = np.stack([
-            add_lat_norm,
-            add_lon_norm,
-            np.full_like(add_lat_norm, last_sog, dtype=np.float32),
-            np.full_like(add_lon_norm, last_cog, dtype=np.float32),
-        ], axis=1)
-        seq_norm = np.vstack([seq_norm, add_feats.astype(np.float32)])
-
-        remaining -= keep
-
-        if not args.iter_rollout:
-            break
-
-    pred_lat = np.asarray(pred_lat_list, dtype=float)
-    pred_lon = np.asarray(pred_lon_list, dtype=float)
-    # Enforce hard continuity at the very start of the predicted sequence (anchor to last past)
-    if len(pred_lat) > 0 and np.isfinite(pred_lat[0]) and np.isfinite(pred_lon[0]):
-        dlat0 = past_last_lat - float(pred_lat[0])
-        dlon0 = past_last_lon - float(pred_lon[0])
-        pred_lat = pred_lat + dlat0
-        pred_lon = pred_lon + dlon0
-        # guardrail
-        try:
-            d0 = haversine_km(past_last_lat, past_last_lon, float(pred_lat[0]), float(pred_lon[0]))
-            if d0 > 0.5:
-                print(f"[warn] first_pred still far after final anchoring: {d0:.2f} km")
-        except Exception:
-            pass
-
-    # Diagnostics
-    print(f"[trip] mmsi={mmsi} trip_id={tid} n_total={n_total} cut={cut} steps={steps}")
-    print(f"[diag] cur=({past_last_lat:.5f},{past_last_lon:.5f}) pred0=({pred_lat[0]:.5f},{pred_lon[0]:.5f})")
-
-    # Extent (auto or Europe)
-    lats_src = np.concatenate([lats_past, lats_true, pred_lat])
-    lons_src = np.concatenate([lons_past, lons_true, pred_lon])
-    if args.auto_extent:
-        # Include entire trip (gray) + segments for robust, clamped extent
-        lats_all = np.concatenate([lats_full, lats_src])
-        lons_all = np.concatenate([lons_full, lons_src])
-        ext = robust_extent(lats_all, lons_all, sigma=args.extent_outlier_sigma)
-    else:
-        ext = tuple(args.map_extent) if args.map_extent is not None else DEFAULT_DENMARK_EXTENT
-
-    # Basemap + plotting
-    import matplotlib.pyplot as plt
-    HAS_CARTOPY = False
-    try:
-        import cartopy.crs as ccrs
-        import cartopy.feature as cfeature
-        HAS_CARTOPY = True
-        proj = ccrs.PlateCarree()
-        fig, ax = plt.subplots(figsize=(9, 6), subplot_kw={'projection': proj})
-        # Basemap features
-        ax.add_feature(cfeature.OCEAN, zorder=0)
-        ax.add_feature(cfeature.LAND, facecolor='lightgray', zorder=1)
-        ax.add_feature(cfeature.COASTLINE, linewidth=0.5, zorder=2)
-        ax.add_feature(cfeature.BORDERS, linewidth=0.5, zorder=2)
-        gl = ax.gridlines(draw_labels=True, linewidth=0.3, alpha=0.5)
-        gl.top_labels = False; gl.right_labels = False
-        ax.set_extent(ext, crs=proj)
-        # Full trip context
-        ax.plot(lons_full, lats_full, color="#999999", linewidth=1.0, alpha=0.3, transform=proj, label="full trip (context)", zorder=1)
-        # Segments with layered zorder to keep blue visible
-        ax.plot(lons_past, lats_past, '-', color="#1f77b4", linewidth=1.8, transform=proj, label="past (input)", zorder=3)
-        ax.plot([past_last_lon], [past_last_lat], 'o', color='k', markersize=4, transform=proj, label='current pos', zorder=4)
-        ax.plot(lons_true, lats_true, '-', color="#2ca02c", linewidth=1.8, transform=proj, label="true future", zorder=4)
-        # Ensure red starts at current pos by prepending the current point
-        pred_lon_plot = np.concatenate([[past_last_lon], pred_lon]) if len(pred_lon) else np.array([past_last_lon])
-        pred_lat_plot = np.concatenate([[past_last_lat], pred_lat]) if len(pred_lat) else np.array([past_last_lat])
-        ax.plot(pred_lon_plot, pred_lat_plot, '--', color="#d62728", linewidth=2.0, transform=proj, label="pred future", zorder=5)
-    except Exception:
-        fig, ax = plt.subplots(figsize=(9, 6))
-        ax.set_xlim(ext[0], ext[1]); ax.set_ylim(ext[2], ext[3])
-        ax.plot(lons_full, lats_full, color="#999999", linewidth=1.0, alpha=0.3, label="full trip (context)", zorder=1)
-        ax.plot(lons_past, lats_past, '-', color="#1f77b4", linewidth=1.8, label="past (input)", zorder=3)
-        ax.plot([past_last_lon], [past_last_lat], 'o', color='k', markersize=4, label='current pos', zorder=4)
-        ax.plot(lons_true, lats_true, '-', color="#2ca02c", linewidth=1.8, label="true future", zorder=4)
-        pred_lon_plot = np.concatenate([[past_last_lon], pred_lon]) if len(pred_lon) else np.array([past_last_lon])
-        pred_lat_plot = np.concatenate([[past_last_lat], pred_lat]) if len(pred_lat) else np.array([past_last_lat])
-        ax.plot(pred_lon_plot, pred_lat_plot, '--', color="#d62728", linewidth=2.0, label="pred future", zorder=5)
-
-    # Title and annotation
-    t0 = float(np.nanmin(trip[:, 7])); t1 = float(np.nanmax(trip[:, 7]))
-    t0_iso = to_iso(t0, fmt=args.timefmt); t1_iso = to_iso(t1, fmt=args.timefmt)
-    if args.stamp_titles:
-        ax.set_title(f"Trajectory sample {sample_idx} ({args.model}) — MMSI {mmsi} — {t0_iso} → {t1_iso}")
-    if args.annotate_id:
-        if HAS_CARTOPY:
-            ax.text(past_last_lon, past_last_lat, f"MMSI {mmsi}\n{t0_iso} → {t1_iso}",
-                    transform=proj, fontsize=8, ha="left", va="bottom",
-                    bbox=dict(facecolor="white", alpha=0.6, edgecolor="none", pad=2), zorder=10)
-        else:
-            ax.text(past_last_lon, past_last_lat, f"MMSI {mmsi}\n{t0_iso} → {t1_iso}",
-                    fontsize=8, ha="left", va="bottom",
-                    bbox=dict(facecolor="white", alpha=0.6, edgecolor="none", pad=2), zorder=10)
-    ax.set_xlabel("Longitude"); ax.set_ylabel("Latitude"); ax.legend(loc="upper left", frameon=True)
-
-    # Output paths
-    out_dir = Path(out_root)
-    if args.output_per_mmsi_subdir:
-        out_dir = out_dir / str(mmsi)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    if args.stamp_filename:
-        out_name = f"traj_{args.model}_mmsi-{mmsi}_trip-{tid}_cut-{args.pred_cut or 'none'}_idx-{sample_idx}.png"
-    else:
-        out_name = f"traj_{args.model}_idx-{sample_idx}.png"
-    fig_path = out_dir / out_name
-    plt.savefig(fig_path, dpi=200, bbox_inches='tight'); plt.close(fig)
-    print(f"[ok] saved {fig_path}")
-
-    # Metadata
-    meta_row = {
-        "sample_idx": int(sample_idx),
-        "model": args.model,
-        "mmsi": int(mmsi),
-        "trip_id": int(tid),
-        "mode": "single" if isinstance(args.mmsi, str) and args.mmsi != 'all' else ("batch_all" if isinstance(args.mmsi, str) and args.mmsi.lower()=="all" else "multi"),
-        "pred_cut": float(args.pred_cut) if args.pred_cut is not None else None,
-        "n_total": int(n_total),
-        "n_past": int(len(lats_past)),
-        "n_true_future": int(len(lats_true)),
-        "n_pred": int(len(pred_lat)),
-        "t_start_iso": t0_iso,
-        "t_end_iso": t1_iso,
-        "lat_min": float(np.nanmin(lats_src)),
-        "lat_max": float(np.nanmax(lats_src)),
-        "lon_min": float(np.nanmin(lons_src)),
-        "lon_max": float(np.nanmax(lons_src)),
-        "out_path": str(fig_path),
-    }
-    if args.save_meta:
-        # Write to per-mmsi local csv if requested, plus global if specified
-        if args.output_per_mmsi_subdir:
-            local_meta = out_dir / "traj_eval_meta.csv"
-            file_exists = local_meta.exists()
-            with open(local_meta, "a", newline="") as f:
-                writer = csv.DictWriter(f, fieldnames=list(meta_row.keys()))
-                if not file_exists:
-                    writer.writeheader()
-                writer.writerow(meta_row)
-        # Global
-        if args.meta_path:
-            global_meta = Path(args.meta_path)
-            global_meta.parent.mkdir(parents=True, exist_ok=True)
-            file_exists = global_meta.exists()
-            with open(global_meta, "a", newline="") as f:
-                writer = csv.DictWriter(f, fieldnames=list(meta_row.keys()))
-                if not file_exists:
-                    writer.writeheader()
-                writer.writerow(meta_row)
-
-    # Optional debug NPZ dump
-    if getattr(args, 'debug_save_npz', False):
-        dbg_dir = out_dir / 'debug_npz'
-        dbg_dir.mkdir(parents=True, exist_ok=True)
-        np.savez_compressed(
-            dbg_dir / f"debug_{mmsi}_{tid}_idx-{sample_idx}.npz",
-            full_lat=lats_full, full_lon=lons_full,
-            past_lat=lats_past, past_lon=lons_past,
-            true_lat=lats_true, true_lon=lons_true,
-            pred_lat=pred_lat, pred_lon=pred_lon,
-            cur_lat=past_last_lat, cur_lon=past_last_lon,
-            extent=np.asarray(ext),
-        )
 
 
 def _resolve_basemap_candidates(basemap_path: Optional[str]) -> Iterable[Path]:
@@ -576,7 +171,7 @@ def load_europe_basemap(basemap_path: Optional[str] = None):
 
 
 def robust_extent(lats: np.ndarray, lons: np.ndarray, pad: float = 0.75,
-                  clamp: Tuple[float, float, float, float] = DEFAULT_DENMARK_EXTENT,
+                  clamp: Tuple[float, float, float, float] = DEFAULT_EUROPE_EXTENT,
                   sigma: float = 3.0) -> Tuple[float, float, float, float]:
     """Compute an outlier-robust extent with padding and clamping to Europe."""
     lats = lats[np.isfinite(lats)]
@@ -606,7 +201,6 @@ def robust_extent(lats: np.ndarray, lons: np.ndarray, pad: float = 0.75,
         lon_min -= 0.5; lon_max += 0.5
 
     lat_min -= pad; lat_max += pad; lon_min -= pad; lon_max += pad
-    # clamp to Denmark bounds
     lon_min = max(clamp[0], lon_min); lon_max = min(clamp[1], lon_max)
     lat_min = max(clamp[2], lat_min); lat_max = min(clamp[3], lat_max)
     return (lon_min, lon_max, lat_min, lat_max)
@@ -840,14 +434,14 @@ def plot_samples(
                     cx = (lon_min + lon_max)/2.0; cy = (lat_min_e + lat_max_e)/2.0
                     w = (lon_max - lon_min) * 1.5; h = (lat_max_e - lat_min_e) * 1.5
                     new_ext = (cx - w/2, cx + w/2, cy - h/2, cy + h/2)
-                    # clamp to Denmark
-                    lon_min = max(DEFAULT_DENMARK_EXTENT[0], new_ext[0])
-                    lon_max = min(DEFAULT_DENMARK_EXTENT[1], new_ext[1])
-                    lat_min_e = max(DEFAULT_DENMARK_EXTENT[2], new_ext[2])
-                    lat_max_e = min(DEFAULT_DENMARK_EXTENT[3], new_ext[3])
+                    # clamp to Europe
+                    lon_min = max(DEFAULT_EUROPE_EXTENT[0], new_ext[0])
+                    lon_max = min(DEFAULT_EUROPE_EXTENT[1], new_ext[1])
+                    lat_min_e = max(DEFAULT_EUROPE_EXTENT[2], new_ext[2])
+                    lat_max_e = min(DEFAULT_EUROPE_EXTENT[3], new_ext[3])
                     ext = (lon_min, lon_max, lat_min_e, lat_max_e)
         else:
-            ext = map_extent if map_extent is not None else DEFAULT_DENMARK_EXTENT
+            ext = map_extent if map_extent is not None else DEFAULT_EUROPE_EXTENT
 
         if HAS_CARTOPY:
             ax.set_extent(ext, crs=proj)
@@ -968,7 +562,7 @@ def plot_samples(
 def main():
     ap = argparse.ArgumentParser(description="Trajectory evaluation and plotting. Note: Past is a window of length --past_len, not the full MMSI trip.")
     ap.add_argument("--split_dir", required=True)
-    ap.add_argument("--ckpt", required=False, default=None)
+    ap.add_argument("--ckpt", required=True)
     ap.add_argument("--model", choices=["gru","tptrans"], default="tptrans")
     ap.add_argument("--batch_size", type=int, default=256)
     ap.add_argument("--max_plots", type=int, default=8)
@@ -979,7 +573,7 @@ def main():
     ap.add_argument("--basemap_path", default=None,
                     help="Optional path to a Natural Earth land file (shp/geojson). Defaults to bundled fixtures if available.")
     ap.add_argument("--map_extent", nargs=4, type=float, metavar=("MIN_LON", "MAX_LON", "MIN_LAT", "MAX_LAT"),
-                    help="Fix the map extent; default is Denmark clamp (6 16 54 58).")
+                    help="Fix the map extent; by default the Europe view (-25 45 30 72) is used.")
     ap.add_argument("--auto_extent", action="store_true",
                     help="If set, zoom to each trajectory with padding instead of using the fixed Europe extent.")
     ap.add_argument("--denorm", action="store_true",
@@ -998,17 +592,6 @@ def main():
     ap.add_argument("--anchor_pred", dest="anchor_pred", action="store_true", help="Anchor absolute predictions to current position if first point is far.")
     ap.add_argument("--no_anchor_pred", dest="anchor_pred", action="store_false")
     ap.set_defaults(anchor_pred=True)
-    ap.add_argument("--pred_mode", choices=["absolute","delta"], default="absolute", help="Prediction mode: absolute outputs or per-step deltas.")
-    # selection / modes
-    ap.add_argument("--mmsi", type=str, default=None, help="Select MMSI: omit for default windows; 'all' for batch; or numeric ID")
-    ap.add_argument("--trip_id", type=int, default=0, help="Trip index when --mmsi is numeric")
-    ap.add_argument("--pred_cut", type=float, default=None, help="%% of trip to treat as past before predicting tail")
-    ap.add_argument("--cap_future", type=int, default=None, help="Cap predicted horizon steps")
-    ap.add_argument("--min_points", type=int, default=30, help="Skip too-short trips")
-    ap.add_argument("--output_per_mmsi_subdir", action="store_true", help="Save outputs in per-MMSI subfolders under out_dir")
-    ap.add_argument("--list_only", action="store_true", help="Dry-run; list selected files and exit")
-    ap.add_argument("--log_skip_reasons", action="store_true", help="Print skip reason for each trip")
-    ap.add_argument("--seed", type=int, default=None, help="RNG seed for reproducibility of selection")
     # stamping / meta
     ap.add_argument("--stamp_titles", dest="stamp_titles", action="store_true")
     ap.add_argument("--no_stamp_titles", dest="stamp_titles", action="store_false")
@@ -1020,145 +603,108 @@ def main():
     ap.add_argument("--no_save_meta", dest="save_meta", action="store_false")
     ap.set_defaults(save_meta=True)
     ap.add_argument("--meta_path", type=str, default="data/figures/traj_eval_meta.csv")
-    ap.add_argument("--timefmt", type=str, default="%Y-%m-%d %H:%M:%S UTC",
-                    help="Time format for titles/meta (use strftime tokens like %%Y-%%m-%%d %%%%H:%%%%M:%%%%S UTC)")
+    ap.add_argument("--timefmt", type=str, default="%Y-%m-%d %H:%M:%S UTC")
     ap.add_argument("--annotate_id", action="store_true", help="Draw MMSI + time span near current point.")
-    ap.add_argument("--debug_save_npz", action="store_true", help="Dump past/true/pred/full arrays to out_dir/debug_npz for inspection.")
     # full trip
     ap.add_argument("--full_trip", action="store_true", help="Overlay full trip context for the sample's source file.")
-    ap.set_defaults(full_trip=True)
-    ap.add_argument("--iter_rollout", action="store_true", help="Iteratively roll out predictions to match tail length (or cap).")
     ap.add_argument("--mmsi_filter", type=int, default=None, help="When set, only overlay context if MMSI matches.")
     ap.add_argument("--max_hours", type=float, default=24.0, help="Max hours for context (currently advisory).")
     args = ap.parse_args()
 
     split = Path(args.split_dir)
-    files = sorted(glob.glob(os.path.join(args.split_dir, "*.pkl")))
+    ds = AISDataset(str(split), max_seqlen=max(96, args.past_len + 12))
+    dl = DataLoader(ds, batch_size=args.batch_size, shuffle=False, num_workers=0, pin_memory=True)
 
-    def _to_int_or_keep(x):
-        try:
-            return int(x)
-        except Exception:
-            return x
+    x0, y0 = ds[0]                       # y0 is ABSOLUTE positions (lon,lat) for the horizon
+    feat_dim = x0.shape[-1]; horizon = y0.shape[0]
 
-    if args.mmsi is None:
-        mode = "multi"
-    elif isinstance(args.mmsi, str) and args.mmsi.lower() == "all":
-        mode = "batch_all"
-    else:
-        mode = "single"
-        args.mmsi = _to_int_or_keep(args.mmsi)
+    model = build_model(args.model, feat_dim, horizon)
+    state = torch.load(args.ckpt, map_location="cpu")
+    try:
+        model.load_state_dict(state, strict=True)
+    except Exception as e:
+        print(f"[warn] strict load failed: {e}\n[info] retrying strict=False")
+        model.load_state_dict(state, strict=False)
+    model.eval()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device)
 
-    print(f"[mode] {mode}")
-    # List-only: dry run over files
-    files = sorted(glob.glob(os.path.join(args.split_dir, "*.pkl")))
-    if args.list_only:
-        if mode == "multi":
-            rng = np.random.default_rng(args.seed)
-            n_select = min(len(files), args.max_plots) if args.max_plots else len(files)
-            if len(files) > n_select:
-                idx = rng.choice(len(files), size=n_select, replace=False)
-                files_to_eval = [files[i] for i in sorted(idx)]
+    preds, gts = [], []
+    keep_for_plot = []
+    seen = 0
+    with torch.no_grad():
+        for xb, yb in dl:
+            xb = xb.to(device).float()
+            yb = yb.to(device).float()         # Ground-truth absolute positions (normalized), order given by dataset
+
+            yp_raw = model(xb)                 # [B,H,2]: abs or deltas depending on training
+
+            # Determine window length (past T) and last absolute point
+            T = xb.size(1)
+            last_lat = xb[:, T - 1, args.lat_idx]
+            last_lon = xb[:, T - 1, args.lon_idx]
+            if args.y_order == "lonlat":
+                last_abs = torch.stack([last_lon, last_lat], dim=1)  # [B,2]
+            else:  # latlon
+                last_abs = torch.stack([last_lat, last_lon], dim=1)  # [B,2]
+
+            if args.pred_is_delta:
+                yp_abs = torch.cumsum(yp_raw, dim=1) + last_abs.unsqueeze(1)  # [B,H,2]
             else:
-                files_to_eval = files[:n_select]
-        elif mode == "batch_all":
-            files_to_eval = files[:args.max_plots] if args.max_plots else files
-        else:
-            tid = int(args.trip_id or 0)
-            files_to_eval = [os.path.join(args.split_dir, f"{int(args.mmsi)}_{tid}_processed.pkl")]
-        print("\n[files selected for evaluation]\n")
-        for f in files_to_eval:
-            try:
-                m, t = parse_trip(f)
-                print(f" - {os.path.basename(f)}  (MMSI={m}, trip_id={t})")
-            except Exception:
-                print(f" - {os.path.basename(f)}")
-        print("\n[done: list_only mode, no plots generated]\n")
-        return
+                yp_abs = yp_raw
 
-    if not args.list_only and not args.ckpt:
-        raise SystemExit("--ckpt is required unless --list_only is set")
+            # Align pred order with ground-truth order for metrics (dataset Y is latlon)
+            if args.y_order == "lonlat":
+                yp_abs_for_metrics = yp_abs[:, :, [1, 0]]
+            else:
+                yp_abs_for_metrics = yp_abs
 
-    def build_and_load_model(hfeat, hhorizon):
-        m = build_model(args.model, hfeat, hhorizon)
-        state = torch.load(args.ckpt, map_location="cpu")
-        try:
-            m.load_state_dict(state, strict=True)
-        except Exception as e:
-            print(f"[warn] strict load failed: {e}\n[info] retrying strict=False")
-            m.load_state_dict(state, strict=False)
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        m.to(device).eval()
-        return m, device
+            yp_np_plot = yp_abs.cpu().numpy()  # keep order per y_order for plotting
+            yb_np = yb.cpu().numpy()
+            yp_metric = yp_abs_for_metrics.cpu().numpy()
 
-    if mode == "multi":
-        rng = np.random.default_rng(args.seed)
-        n_select = min(len(files), args.max_plots) if args.max_plots else len(files)
-        if len(files) > n_select:
-            idx = rng.choice(len(files), size=n_select, replace=False)
-            files_to_eval = [files[i] for i in sorted(idx)]
-        else:
-            files_to_eval = files[:n_select]
+            preds.append(yp_metric); gts.append(yb_np)
+            if len(keep_for_plot) < args.max_plots:
+                bsz = len(xb)
+                take = min(4, bsz)
+                for i in range(take):
+                    keep_for_plot.append((seen + i, xb[i].cpu().numpy(), yb_np[i], yp_np_plot[i]))
+                    if len(keep_for_plot) >= args.max_plots:
+                        break
+            seen += len(xb)
 
-    # File-based modes
-    if mode != "multi":
-        if not files:
-            print("[warn] no .pkl files found in split_dir")
-            return
+    pred = np.concatenate(preds, axis=0)
+    Y    = np.concatenate(gts,   axis=0)
+    ade_val = float(ade(pred, Y))
+    fde_val = float(fde(pred, Y))
+    print(f"VAL: ADE={ade_val:.3f}  FDE={fde_val:.3f}")
 
-        if mode == "batch_all":
-            files_to_eval = files[:args.max_plots] if args.max_plots else files
-        else:  # single
-            tid = int(args.trip_id or 0)
-            files_to_eval = [os.path.join(args.split_dir, f"{int(args.mmsi)}_{tid}_processed.pkl")]
+    metrics_dir = Path("metrics"); metrics_dir.mkdir(exist_ok=True)
+    out_json = metrics_dir / f"traj_{args.model}_{split.name}.json"
+    out_json.write_text(json.dumps({
+        "task":"trajectory","model":args.model,"split":str(split),
+        "ckpt":str(args.ckpt),"ade":ade_val,"fde":fde_val,"count":int(len(Y))
+    }, indent=2))
+    print(f"[metrics] wrote {out_json}")
 
-    # Common evaluation for 'multi' (selected subset) and 'batch_all'/'single'
-    if mode == "multi":
-        pass  # files_to_eval prepared above
-    elif mode in ("batch_all", "single"):
-        pass
-    else:
-        files_to_eval = []
+    basemap = load_europe_basemap(args.basemap_path)
+    map_extent = tuple(args.map_extent) if args.map_extent is not None else None
 
-    if not files_to_eval:
-        print("[warn] no .pkl files found in split_dir")
-        return
+    # Note: Past is a window of length --past_len, not the full MMSI trip.
+    print("[info] Note: Past plotted is a window of length --past_len, not the full MMSI trip. Use --full_trip for context.")
 
-    print(f"[mode] {mode}  found={len(files)}  selected={len(files_to_eval)}  max_plots={args.max_plots}")
-
-    if args.list_only:
-        print("\n[files selected for evaluation]\n")
-        for f in files_to_eval:
-            try:
-                m, t = parse_trip(f)
-                print(f" - {os.path.basename(f)}  (MMSI={m}, trip_id={t})")
-            except Exception:
-                print(f" - {os.path.basename(f)}")
-        print("\n[done: list_only mode, no plots generated]\n")
-        return
-
-    # Build model for file-based inference (use generic horizon if not specified)
-    feat_dim = 4; horizon = args.cap_future if args.cap_future else 128
-    model, device = build_and_load_model(feat_dim, horizon)
-
-    print(f"[info] Evaluating {len(files_to_eval)} trajectories from {args.split_dir}")
-    ok = 0; skipped = 0
-    for i, f in enumerate(files_to_eval):
-        try:
-            trip = load_trip(f, min_points=args.min_points)
-            print(f"[info] {i+1}/{len(files_to_eval)} {os.path.basename(f)}: shape={trip.shape}")
-            if trip.shape[1] < 4:
-                raise ValueError(f"not enough features D={trip.shape[1]}; need at least 4 [lat,lon,sog,cog]")
-            if np.isnan(trip).any():
-                raise ValueError("contains NaNs")
-            evaluate_and_plot_trip(f, trip, model, args, Path(args.out_dir), basemap=None, proj=None, sample_idx=i)
-            ok += 1
-            print(f"[ok] {os.path.basename(f)} plotted ({len(trip)} pts)")
-        except Exception as e:
-            skipped += 1
-            if args.log_skip_reasons:
-                print(f"[skip] {os.path.basename(f)} reason={e}")
-    print(f"[summary] plotted={ok}, skipped={skipped}, total={len(files_to_eval)}")
+    plot_samples(keep_for_plot, ds, args.model, Path(args.out_dir),
+                 args.lat_idx, args.lon_idx, past_len=args.past_len, max_plots=args.max_plots,
+                 basemap=basemap, map_extent=map_extent, auto_extent=args.auto_extent,
+                 extent_source=args.extent_source, extent_outlier_sigma=args.extent_outlier_sigma,
+                 y_order=args.y_order,
+                 pred_is_delta=args.pred_is_delta, anchor_pred=args.anchor_pred,
+                 lat_min=args.lat_min, lat_max=args.lat_max,
+                 lon_min=args.lon_min, lon_max=args.lon_max,
+                 stamp_titles=args.stamp_titles, stamp_filename=args.stamp_filename,
+                 save_meta=args.save_meta, meta_path=args.meta_path, timefmt=args.timefmt,
+                 annotate_id=args.annotate_id, full_trip=args.full_trip,
+                 mmsi_filter=args.mmsi_filter, max_hours=args.max_hours)
 
 if __name__ == "__main__":
     main()
