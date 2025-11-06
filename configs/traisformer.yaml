@@ -1,0 +1,34 @@
+task: trajectory
+processed_dir: data/map_reduced/   # MUST end with slash
+out_dir: data/checkpoints
+window: 128
+horizon: 24
+
+model:
+  name: traisformer
+  d_model: 512
+  nhead: 8
+  enc_layers: 8
+  dropout: 0.1
+
+# TrAISformer loss auxiliaries
+coarse_merge: 3
+coarse_beta: 0.2
+
+# Discretization region/bins
+bins:
+  lat_min: 54.0
+  lat_max: 58.0
+  lon_min: 6.0
+  lon_max: 16.0
+  sog_max: 50.0
+  n_lat: 256
+  n_lon: 512
+  n_sog: 50
+  n_cog: 72
+
+loss: ce         # (ignored; TrAISformer uses CE internally)
+optimizer: adamw
+lr: 0.0003
+batch_size: 96
+epochs: 30
