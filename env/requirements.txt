@@ -12,6 +12,9 @@ polars
 shapely
 geopandas
 h3
+cartopy
+pyproj
+
 
 # Parallel helpers
 pandarallel
