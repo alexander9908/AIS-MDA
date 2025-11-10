@@ -16,3 +16,6 @@ data/
 locals/*
 src/eval/README_MTM.md
 README_SELF_SUPERVISED.md
+TEMP_DIR/
+hpc_jobs/logs/*
+wandb/

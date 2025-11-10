@@ -1,7 +1,5 @@
 task: trajectory
-wandb_group: bertram_test
-run_name: bertram_tptrans_test
-processed_dir: /Users/bertramhage/Development/preprocessed/
+processed_dir: data/map_reduced/
 out_dir: data/checkpoints
 window: 64
 horizon: 12
@@ -12,6 +10,8 @@ model:
   nhead: 4
   enc_layers: 4
   dec_layers: 2
+  # dim_ff: 2048      # <— for compatibility with old checkpoints
+  # use_posenc: false # <— if you want to exactly mirror old ckpts
 loss: huber
 optimizer: adamw
 lr: 0.0003

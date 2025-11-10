@@ -6,6 +6,8 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset, random_split
 from src.utils.datasets import AISDataset
+from src.utils.logging import CustomLogger
+from src.train.arguments import add_arguments
 
 from ..config import load_config
 from ..models import GRUSeq2Seq, TPTrans
@@ -15,8 +17,9 @@ def huber_loss(pred, target, delta: float = 1.0):
     return nn.SmoothL1Loss(beta=delta)(pred, target)
 
 
-def main(cfg_path: str):
-    cfg = load_config(cfg_path)
+def main(cfg: str, logger: CustomLogger):
+    
+    logger.log_config(cfg)
 
     preprocessed_dataset_dir = cfg.get('processed_dir')
     out_dir = Path(cfg.get("out_dir", "data/checkpoints"))
@@ -24,6 +27,8 @@ def main(cfg_path: str):
 
     ds_train = AISDataset(preprocessed_dataset_dir + "train", max_seqlen=96)
     ds_val = AISDataset(preprocessed_dataset_dir + "val", max_seqlen=96)
+    logger.info(f"Training samples: {len(ds_train)}")
+    logger.info(f"Validation samples: {len(ds_val)}")
     has_val = True
 
     dl_train = DataLoader(ds_train, batch_size=int(cfg.get("batch_size", 128)), shuffle=True, num_workers=0, pin_memory=True)
@@ -110,6 +115,7 @@ def main(cfg_path: str):
 
         train_loss = total / len(ds_train)
         msg = f"epoch {epoch}: train_loss={train_loss:.4f}"
+        metric_dir = {"train_loss": train_loss}
 
         if has_val:
             model.eval()
@@ -122,6 +128,7 @@ def main(cfg_path: str):
                     vtotal += huber_loss(pred, yb, delta=delta).item() * xb.size(0)
             val_loss = vtotal / len(ds_val)
             msg += f"  val_loss={val_loss:.4f}"
+            metric_dir["val_loss"] = val_loss
             # Save best
             if val_loss < best_val:
                 best_val = val_loss
@@ -129,14 +136,38 @@ def main(cfg_path: str):
         else:
             # No val set → keep overwriting; last epoch wins
             torch.save(model.state_dict(), best_path)
+        
+        logger.log_metrics(metric_dir, step=epoch)
+        logger.info(msg)
+        
+    # Save final model to WandB artifacts
+    logger.artifact(
+        artifact=best_path,
+        name=f"{model_name}_traj_model",
+        type="model",
+    )
 
-        print(msg)
-
-    print(f"Saved model to {best_path}")
-
+    logger.info(f"Saved model to {best_path}")
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--config", required=True)
+    ap.add_argument("--config", required=False, default=None, type=str, help="Path to config file.")
     args = ap.parse_args()
-    main(args.config)
+    if args.config is None:
+        ap = argparse.ArgumentParser()
+        add_arguments(ap)
+        args = ap.parse_args()
+        config_dict = vars(args)
+        config_dict = {
+            key: value.split(',') if isinstance(value, str) and ',' in value else value
+            for key, value in config_dict.items()
+        }
+    else:
+        config_dict = load_config(args.config)
+        
+    logger = CustomLogger(project_name="AIS-MDA", group=config_dict.get("wandb_group", None), run_name=config_dict.get("run_name", None))
+    if config_dict.get("wandb_tags", []):
+        logger.add_tags(config_dict["wandb_tags"])
+        
+    main(config_dict, logger=logger)
+    logger.finish(exit_code=0)
