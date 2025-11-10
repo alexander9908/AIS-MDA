@@ -28,15 +28,18 @@ cd ~/AIS-MDA
 ### activate environment
 . .venv/bin/activate
 
-### Run Kalman Filter evaluation on ALL data in map_reduce_final/
-### This will process ~700 trajectories with window=64, horizon=12
+### Run Kalman Filter evaluation on ALL data
+### This will process all trajectories with window=64, horizon=12
+### IMPORTANT: Update FINAL_DIR to point to your processed pickle files on HPC
+FINAL_DIR="/dtu/blackhole/10/178320/preprocessed_test"  # Your *_processed.pkl files
+
 echo "Starting Kalman Filter evaluation on full dataset..."
-echo "Data directory: data/map_reduce_final"
+echo "Data directory: $FINAL_DIR"
 echo "Window size: 64, Horizon: 12"
 echo "Start time: $(date)"
 
 python -m src.baselines.train_kalman \
-    --final_dir data/map_reduce_final \
+    --final_dir $FINAL_DIR \
     --window_size 64 \
     --horizon 12 \
     --val_frac 0.15 \

@@ -30,13 +30,16 @@ cd ~/AIS-MDA
 
 ### Run Kalman Filter hyperparameter tuning
 ### This will perform grid search over process/measurement noise parameters
+### IMPORTANT: Update FINAL_DIR to point to your processed pickle files on HPC
+FINAL_DIR="/work3/s204572/AIS-data/map_reduce_final"  # UPDATE THIS PATH for HPC
+
 echo "Starting Kalman Filter hyperparameter tuning..."
-echo "Data directory: data/map_reduce_final"
+echo "Data directory: $FINAL_DIR"
 echo "Window size: 64, Horizon: 12"
 echo "Start time: $(date)"
 
 python -m src.baselines.train_kalman \
-    --final_dir data/map_reduce_final \
+    --final_dir $FINAL_DIR \
     --window_size 64 \
     --horizon 12 \
     --val_frac 0.15 \
