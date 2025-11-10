@@ -4,18 +4,21 @@ Compare Kalman Filter baseline with neural network models.
 Loads predictions from both models and generates comparative metrics.
 
 Usage:
-    python -m src.baselines.compare_models --final_dir data/map_reduce_final
+    python -m kalman_filter.baselines.compare_models --final_dir data/map_reduce_final
 """
 
 from __future__ import annotations
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
 import argparse
 import json
-from pathlib import Path
 import numpy as np
 from tqdm import tqdm
 
-from .train_kalman import load_trajectories, split_trajectories, create_windows, evaluate_kalman
-from ..models.kalman_filter import TrajectoryKalmanFilter, KalmanFilterParams
+from kalman_filter.baselines.train_kalman import load_trajectories, split_trajectories, create_windows, evaluate_kalman
+from kalman_filter.kalman_filter import TrajectoryKalmanFilter, KalmanFilterParams
 
 
 def compare_with_existing_results(kalman_results: dict, metrics_dir: Path):
@@ -116,7 +119,7 @@ def analyze_error_by_scenario(kalman_filter: TrajectoryKalmanFilter,
     print("SCENARIO-BASED ANALYSIS")
     print("=" * 70)
     
-    from ..eval.metrics_traj import ade
+    from src.eval.metrics_traj import ade
     
     scenarios = {
         "straight_low_speed": [],

@@ -28,6 +28,9 @@ cd ~/AIS-MDA
 ### activate environment
 . .venv/bin/activate
 
+### load python module
+module swap python3/3.13.2
+
 ### Define paths - UPDATE THESE for your HPC setup
 INPUT_DIR="/dtu/blackhole/10/178320/preprocessed_1/pickles"
 TEMP_DIR="/work3/s204572/AIS-data/map_reduce_temp"

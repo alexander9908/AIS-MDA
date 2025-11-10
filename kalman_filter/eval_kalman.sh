@@ -17,7 +17,7 @@ echo ""
 # Check if tuning is requested
 if [[ "${4:-}" == "--tune" ]]; then
     echo "Running with hyperparameter tuning..."
-    python -m src.baselines.train_kalman \
+    python -m kalman_filter.baselines.train_kalman \
         --final_dir "$FINAL_DIR" \
         --window "$WINDOW" \
         --horizon "$HORIZON" \
@@ -26,7 +26,7 @@ if [[ "${4:-}" == "--tune" ]]; then
         --tune
 else
     echo "Running with default parameters..."
-    python -m src.baselines.train_kalman \
+    python -m kalman_filter.baselines.train_kalman \
         --final_dir "$FINAL_DIR" \
         --window "$WINDOW" \
         --horizon "$HORIZON" \

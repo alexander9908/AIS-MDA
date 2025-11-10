@@ -15,8 +15,12 @@ from typing import List, Tuple
 import numpy as np
 from tqdm import tqdm
 
-from ..models.kalman_filter import TrajectoryKalmanFilter, KalmanFilterParams, tune_kalman_filter
-from ..eval.metrics_traj import ade, fde
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+from kalman_filter.kalman_filter import TrajectoryKalmanFilter, KalmanFilterParams, tune_kalman_filter
+from src.eval.metrics_traj import ade, fde
 
 
 # Column indices for MapReduce processed data

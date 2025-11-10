@@ -5,15 +5,18 @@ Creates comparison plots for trajectory predictions.
 """
 
 from __future__ import annotations
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
 import argparse
 import pickle
 import os
-from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
 
-from ..models.kalman_filter import TrajectoryKalmanFilter, KalmanFilterParams
+from kalman_filter.kalman_filter import TrajectoryKalmanFilter, KalmanFilterParams
 
 
 # Column indices

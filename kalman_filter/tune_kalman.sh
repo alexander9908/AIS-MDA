@@ -28,6 +28,9 @@ cd ~/AIS-MDA
 ### activate environment
 . .venv/bin/activate
 
+### load python module
+module swap python3/3.13.2
+
 ### Run Kalman Filter hyperparameter tuning
 ### This will perform grid search over process/measurement noise parameters
 ### IMPORTANT: Update FINAL_DIR to point to your processed pickle files on HPC
@@ -38,7 +41,7 @@ echo "Data directory: $FINAL_DIR"
 echo "Window size: 64, Horizon: 12"
 echo "Start time: $(date)"
 
-python -m src.baselines.train_kalman \
+python -m kalman_filter.baselines.train_kalman \
     --final_dir $FINAL_DIR \
     --window_size 64 \
     --horizon 12 \
