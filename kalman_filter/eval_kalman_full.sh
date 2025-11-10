@@ -1,25 +1,25 @@
 #!/bin/sh
 
 ### Job Name:
-#BSUB -J kalman_eval_full
+#BSUB -J kalman_eval_test
 
 ### Queue Name:
 #BSUB -q hpc
 
 ### Requesting 8 CPU cores, 8GB memory per core (Kalman Filter is CPU-bound)
-#BSUB -n 8
-#BSUB -R "rusage[mem=8GB]"
+#BSUB -n 4
+#BSUB -R "rusage[mem=4GB]"
 
 ### Setting a runtime limit of 4 hours (conservative for full dataset)
-#BSUB -W 4:00
+#BSUB -W 2:00
 
 ### Email notification when job begins and ends
 #BSUB -B
 #BSUB -N
 
 ### Output and error files
-#BSUB -o Output_%J.out
-#BSUB -e Output_%J.err
+#BSUB -o hpc_jobs/logs/Output_%J.out
+#BSUB -e hpc_jobs/logs/Output_%J.err
 
 
 ### cd to repo dir
