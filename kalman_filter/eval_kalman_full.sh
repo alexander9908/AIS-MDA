@@ -46,7 +46,8 @@ python -m kalman_filter.baselines.train_kalman \
     --window 64 \
     --horizon 12 \
     --val_frac 0.15 \
-    --test_frac 0.15
+    --test_frac 0.15 \
+    --max_windows 999999
 
 echo "End time: $(date)"
 echo "Results saved to metrics/kalman_filter.json"

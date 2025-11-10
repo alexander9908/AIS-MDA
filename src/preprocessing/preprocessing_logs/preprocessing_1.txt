@@ -1,0 +1,7 @@
+Ran preprocessing script on 3 months worth of data using preprocessing pipeline at hash 88e943e.
+
+Ran remove_non_cargo_tanker script resulting in:
+Cargo voyages kept: 8914
+Tanker voyages kept: 3820
+Fishing voyages removed: 3223
+Other voyages removed: 9932

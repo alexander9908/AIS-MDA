@@ -1,0 +1,32 @@
+#!/bin/sh
+
+### Job Name:
+#BSUB -J test_run
+
+### Queue Name:
+#BSUB -q hpc
+
+### Requesting 4 CPU cores, 4GB memory per core
+#BSUB -n 4
+#BSUB -R "rusage[mem=4GB]"
+
+### Setting a runtime limit of 2 hours
+#BSUB -W 2:00
+
+### Email notification when job begins and ends
+#BSUB -B
+#BSUB -N
+
+### Output and error files
+#BSUB -o hpc_jobs/logs/Output_%J.out
+#BSUB -e hpc_jobs/logs/Output_%J.err
+
+
+### cd to repo dir
+cd ~/AIS-MDA
+
+### activate environment
+. .venv/bin/activate
+
+### run script
+python -m src.train.train_traj --config configs/test_bertram.yaml
