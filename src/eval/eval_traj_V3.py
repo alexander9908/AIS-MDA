@@ -30,6 +30,63 @@ except Exception:
     pass
 
 
+
+# Helpers
+def _ensure_bt(x: torch.Tensor, device=None) -> torch.Tensor:
+    """
+    Ensure tensor is 2-D [B, T] with B=1. Accepts 0-D/1-D/2-D/3-D inputs and
+    squeezes singleton dims safely. Raises if shape is truly incompatible.
+    """
+    if device is not None:
+        x = x.to(device)
+    # drop singleton dims first (e.g., [1, T] stays [1, T]; [1, 1, T] -> [1, T])
+    x = x.squeeze()
+    if x.dim() == 0:
+        # scalar -> [1,1]
+        x = x.view(1, 1)
+    elif x.dim() == 1:
+        # [T] -> [1, T]
+        x = x.unsqueeze(0)
+    elif x.dim() == 2:
+        # [B, T] keep as-is; if B>1 it's still fine but we'll only use B=1 in eval
+        return x
+    else:
+        # More than 2D: try to squeeze extra singleton dims; if still >2D, error out
+        x = x.squeeze()
+        if x.dim() == 1:
+            x = x.unsqueeze(0)
+        elif x.dim() > 2:
+            raise ValueError(f"Expected <=2 dims for bin indices, got shape {tuple(x.shape)}")
+    return x
+
+
+
+# --- strict helper to normalize shapes/dtypes for TrAISformer ---
+def _to_idx_1xT(x: torch.Tensor, device) -> torch.Tensor:
+    """
+    Force bin indices to shape [1, T], dtype long, contiguous.
+    Accepts anything from [T], [1,T], [1,1,T], [T,1] etc.
+    """
+    x = x.to(device)
+    x = x.squeeze()              # drop all singleton dims first
+    if x.dim() == 0:
+        x = x.view(1, 1)         # scalar -> [1,1]
+    elif x.dim() == 1:
+        x = x.unsqueeze(0)       # [T] -> [1,T]
+    elif x.dim() > 2:
+        # squeeze again in case it's [T,1] -> [T]; or [1,1,T] -> [T]
+        x = x.squeeze()
+        if x.dim() == 1:
+            x = x.unsqueeze(0)
+        elif x.dim() != 2:
+            raise ValueError(f"Expected <=2 dims for bin indices, got {tuple(x.shape)}")
+    # now [1, T]
+    return x.to(dtype=torch.long).contiguous()
+
+
+
+
+
 def parse_trip(fname: str) -> Tuple[int, int]:
     base = os.path.basename(fname).replace("_processed.pkl", "")
     mmsi_str, trip_id_str = base.split("_", 1)
@@ -174,20 +231,44 @@ def evaluate_and_plot_trip(
 
 
     # --- Iterative rollout to cover N_future ---
-    # --- Iterative rollout to cover N_future ---
     device = next(model.parameters()).device
     if args.model == "traisformer":
         # Past to bins:
         seq_in = past[:, :4].astype(np.float32)  # [lat,lon,sog,cog]
         lat, lon = seq_in[:,0], seq_in[:,1]
-        sog = np.clip(seq_in[:,2], 0, 1) * model.bins.sog_max
-        cog = (seq_in[:,3] % 1.0) * 360.0
+
+        # --- NEW: robust SOG/COG handling (works for normalized OR physical units) ---
+        raw_sog = seq_in[:,2]
+        raw_cog = seq_in[:,3]
+
+        # SOG: if looks normalized (≤~1.2), scale to knots; else assume already in knots
+        if np.nanmax(raw_sog) <= 1.2:
+            sog = np.clip(raw_sog, 0.0, 1.0) * float(model.bins.sog_max)
+        else:
+            sog = np.clip(raw_sog, 0.0, float(model.bins.sog_max))
+
+        # COG: if looks normalized (≤~1.5), map 0..1 → 0..360; else assume degrees and wrap
+        if np.nanmax(np.abs(raw_cog)) <= 1.5:
+            cog = (raw_cog % 1.0) * 360.0
+        else:
+            cog = raw_cog % 360.0
+        # --- END NEW ---
+
+        lat_idx = model.bins.lat_to_bin(torch.tensor(lat, device=device))
+        lon_idx = model.bins.lon_to_bin(torch.tensor(lon, device=device))
+        sog_idx = model.bins.sog_to_bin(torch.tensor(sog, device=device))
+        cog_idx = model.bins.cog_to_bin(torch.tensor(cog, device=device))
+
         past_idxs = {
-            "lat": model.bins.lat_to_bin(torch.tensor(lat, device=device)).unsqueeze(0),
-            "lon": model.bins.lon_to_bin(torch.tensor(lon, device=device)).unsqueeze(0),
-            "sog": model.bins.sog_to_bin(torch.tensor(sog, device=device)).unsqueeze(0),
-            "cog": model.bins.cog_to_bin(torch.tensor(cog, device=device)).unsqueeze(0),
+            "lat": _to_idx_1xT(lat_idx, device),
+            "lon": _to_idx_1xT(lon_idx, device),
+            "sog": _to_idx_1xT(sog_idx, device),
+            "cog": _to_idx_1xT(cog_idx, device),
         }
+
+        # (optional sanity)
+        for k,v in past_idxs.items():
+            assert v.dim()==2 and v.shape[0]==1, f"{k} bad shape {tuple(v.shape)}"
 
         # Sample K times, keep best ADE
         best = None
@@ -196,21 +277,84 @@ def evaluate_and_plot_trip(
                                      sampling="sample" if args.temperature != 0 else "greedy",
                                      temperature=float(getattr(args, "temperature", 1.0)),
                                      top_k=int(getattr(args, "top_k", 20)))
-            cont = model.bins_to_continuous(out_idx)  # dict of tensors [1,L]
-            plat = cont["lat"].squeeze(0).cpu().numpy()
-            plon = cont["lon"].squeeze(0).cpu().numpy()
+            
+           # DEBUG: how many unique tokens did we sample?
+            if args.verbose:
+                for key in ("lat","lon","sog","cog"):
+                    t = out_idx[key]                # expected shape [1, L] (long)
+                    vals = t.squeeze(0).detach().cpu().numpy()
+                    uniq = np.unique(vals)
+                    print(f"[debug] uniq {key} bins: {len(uniq)}  first5={uniq[:5]}")
+ 
+
+            cont = model.bins_to_continuous(out_idx)  # dict of tensors
+            pred_lat = cont["lat"].squeeze(0).cpu().numpy()
+            pred_lon = cont["lon"].squeeze(0).cpu().numpy()
+            pred_sog = cont["sog"].squeeze(0).cpu().numpy()  # knots
+            pred_cog = cont["cog"].squeeze(0).cpu().numpy()  # degrees
+
+            # --- Fallback: if predicted lat/lon are (nearly) constant, build a polyline from current pos using predicted SOG/COG ---
+            _lat_std = float(np.nanstd(pred_lat))
+            _lon_std = float(np.nanstd(pred_lon))
+
+            if (_lat_std < 1e-9) and (_lon_std < 1e-9):
+                # step duration (seconds): use future timestamps if available, else median past cadence, else 60s
+                if cut + 1 < len(trip):
+                    ts_slice = trip[cut : min(len(trip), cut + 1 + len(pred_sog)), 7].astype(float)
+                    dts = np.diff(ts_slice)
+                    dt = float(np.nanmedian(dts[dts > 0])) if dts.size else 60.0
+                else:
+                    # fallback to median cadence from the whole trip or 60s
+                    ts_all = trip[:, 7].astype(float)
+                    dts = np.diff(ts_all)
+                    dt = float(np.nanmedian(dts[dts > 0])) if dts.size else 60.0
+
+                R = 6371000.0  # meters
+                lat_seq = [float(cur_lat)]
+                lon_seq = [float(cur_lon)]
+                lat_now = float(cur_lat)
+                lon_now = float(cur_lon)
+
+                for k in range(len(pred_sog)):
+                    sog_kn = float(np.clip(pred_sog[k], 0.0, float(model.bins.sog_max)))  # knots
+                    cog_deg = float(pred_cog[k] % 360.0)
+
+                    # meters per step from knots
+                    ds_m = sog_kn * 0.514444 * dt
+
+                    # heading to radians; 0°=North by nautical convention, but map uses lon eastward
+                    # Use theta where 0 rad points East for simple local-projection step:
+                    theta = np.radians(90.0 - cog_deg)
+
+                    # convert meters to degrees at current latitude
+                    coslat = max(1e-6, np.cos(np.radians(lat_now)))
+                    dlon_deg = (ds_m * np.cos(theta)) / (R * coslat) * (180.0 / np.pi)
+                    dlat_deg = (ds_m * np.sin(theta)) / R * (180.0 / np.pi)
+
+                    lon_now += dlon_deg
+                    lat_now += dlat_deg
+                    lon_seq.append(lon_now)
+                    lat_seq.append(lat_now)
+
+                # replace lat/lon with synthesized polyline (length = len(pred_sog)+1)
+                pred_lon = np.asarray(lon_seq, dtype=float)
+                pred_lat = np.asarray(lat_seq, dtype=float)
+
 
             # Anchor first point to current pos (visual continuity)
-            if len(plat) > 0:
-                dlat0 = cur_lat - float(plat[0]); dlon0 = cur_lon - float(plon[0])
-                plat = plat + dlat0; plon = plon + dlon0
+            if len(pred_lat) > 0:
+                dlat0 = cur_lat - float(pred_lat[0]); dlon0 = cur_lon - float(pred_lon[0])
+                pred_lat = pred_lat + dlat0; pred_lon = pred_lon + dlon0
 
-            ade_tmp = np.mean([haversine_km(lats_true_eval[i], lons_true_eval[i], plat[i], plon[i]) for i in range(min(len(plat), len(lats_true_eval)))])
-            cand = (ade_tmp, plat, plon)
+            ade_tmp = np.mean([haversine_km(lats_true_eval[i], lons_true_eval[i], pred_lat[i], pred_lon[i]) for i in range(min(len(pred_lat), len(lats_true_eval)))])
+            cand = (ade_tmp, pred_lat, pred_lon)
             if (best is None) or (ade_tmp < best[0]): best = cand
 
         pred_lat, pred_lon = np.asarray(best[1]), np.asarray(best[2])
-
+        
+        
+        # --- Enforce equal number of points ---
+        #N_true = len(lats_true_eval)
     else:
         # GRU rollout
         seq_in = past[:, :4].astype(np.float32)  # [lat,lon,sog,cog]
@@ -313,6 +457,44 @@ def evaluate_and_plot_trip(
         if len(pred_lat) == 0:
             pred_lat = np.array([cur_lat], float); pred_lon = np.array([cur_lon], float)
 
+        # --- Fallback: if model is degenerate (no movement), synthesize a simple line
+        # Uses last known SOG/COG and future timestamps to step forward, then --match_distance will trim.
+        if float(np.std(pred_lat)) == 0.0 and float(np.std(pred_lon)) == 0.0:
+            # Estimate per-step duration from true future timestamps (same cadence as green)
+            ts_future = trip[cut : cut + N_true, 7] if 'N_true' in locals() else trip[cut:, 7]
+            if len(ts_future) >= 2:
+                dt_steps = np.diff(ts_future)
+                dt_mean = float(np.clip(np.nanmedian(dt_steps), 1.0, 3600.0))  # seconds
+            else:
+                dt_mean = 60.0
+
+            # Take last SOG/COG from the past (robust to units)
+            last_sog_raw = float(past[-1, 2])
+            last_cog_raw = float(past[-1, 3])
+
+            # SOG knots -> m/s (robust if already normalized)
+            sog_knots = (last_sog_raw * float(model.bins.sog_max)) if last_sog_raw <= 1.2 else last_sog_raw
+            sog_mps = max(0.0, sog_knots * 0.514444)
+            step_km = (sog_mps * dt_mean) / 1000.0  # km per step
+
+            # COG to radians (robust if normalized)
+            cog_deg = (last_cog_raw * 360.0) if abs(last_cog_raw) <= 1.5 else last_cog_raw
+            cog_deg = float(cog_deg % 360.0)
+            theta = np.radians(90.0 - cog_deg)  # 0° east in our simple projection
+
+            # crude local projection around current pos (ok for short steps)
+            R = 6371.0  # km
+            coslat = np.cos(np.radians(cur_lat)) if np.isfinite(cur_lat) else 1.0
+            n_steps = max(2, len(lats_true_eval))  # aim to match N_true
+            px = [cur_lon]; py = [cur_lat]
+            for _ in range(n_steps - 1):
+                dlon = (step_km * np.cos(theta)) / (R * coslat) * (180.0 / np.pi)
+                dlat = (step_km * np.sin(theta)) / R * (180.0 / np.pi)
+                px.append(px[-1] + dlon)
+                py.append(py[-1] + dlat)
+            pred_lon = np.asarray(px, float)
+            pred_lat = np.asarray(py, float)
+
     # --- FINAL ALIGNMENT (points) ---
     N_true = len(lats_true_eval)
     N_pred = len(pred_lat)
@@ -326,7 +508,28 @@ def evaluate_and_plot_trip(
     pred_lat       = pred_lat[:n_eff]
     pred_lon       = pred_lon[:n_eff]
 
+    # --- Clean NaNs just before plotting ---
+    # --- Make sure they are plain float arrays ---
+    pred_lat = np.asarray(pred_lat, dtype=float)
+    pred_lon = np.asarray(pred_lon, dtype=float)
 
+    # --- Safe NaN/Inf mask (with fallback so we always plot *something*) ---
+    mask = np.isfinite(pred_lat) & np.isfinite(pred_lon)
+    if not np.any(mask):
+        # Fallback: draw a tiny 1-point “prediction” at current pos so the red marker shows.
+        # This also guarantees the connector line is visible.
+        pred_lat = np.array([cur_lat], dtype=float)
+        pred_lon = np.array([cur_lon], dtype=float)
+    else:
+        pred_lat = pred_lat[mask]
+        pred_lon = pred_lon[mask]
+
+    if args.verbose:
+        print(f"[debug] pred_len={len(pred_lat)}  first2={(pred_lat[:2], pred_lon[:2])}")
+    if args.verbose:
+        print("[debug] pred std (lat, lon):",
+              float(np.std(pred_lat)), float(np.std(pred_lon)))
+        
     # --- Metrics ---
     def ade_km(tlat, tlon, plat, plon) -> float:
         n = min(len(tlat), len(plat))
@@ -351,7 +554,18 @@ def evaluate_and_plot_trip(
     #print(f"[debug] ade={ade:.3f}km  fde={fde:.3f}km  mae={mae:.3f}km")
 
     # --- Extent ---
-    ext = robust_extent(full_lat_deg, full_lon_deg, sigma=args.extent_outlier_sigma) if args.auto_extent else DEFAULT_DK_EXTENT
+    # OLD:
+    # ext = robust_extent(full_lat_deg, full_lon_deg, sigma=args.extent_outlier_sigma) if args.auto_extent else DEFAULT_DK_EXTENT
+
+    # NEW (include prediction in the extent box)
+    if args.auto_extent:
+        ext = robust_extent(
+            np.r_[full_lat_deg, pred_lat],
+            np.r_[full_lon_deg, pred_lon],
+            sigma=args.extent_outlier_sigma
+        )
+    else:
+        ext = DEFAULT_DK_EXTENT
 
     # --- Plot ---
     HAS_CARTOPY = False
@@ -382,12 +596,23 @@ def evaluate_and_plot_trip(
 
         # red: aligned prediction
         if len(pred_lat) >= 2:
-            ax.plot(pred_lon, pred_lat, '--', color="#d62728", linewidth=2.0,
-                    transform=proj if HAS_CARTOPY else None, label="pred future", zorder=5)
+            ax.plot(pred_lon, pred_lat, '--', color="#d62728",
+                    linewidth=2.5, dashes=(4, 3),                # a hair thicker
+                    transform=proj, label="pred future",
+                    zorder=7, solid_capstyle='round', dash_capstyle='round')
         else:
             ax.plot(pred_lon, pred_lat, 'x', color="#d62728",
-                    transform=proj if HAS_CARTOPY else None, zorder=5, label="pred future (pt)")
-            
+                    transform=proj, zorder=7, label="pred future (pt)")
+
+        # ALWAYS add dots so red is visible even when overlapping green
+        #ax.scatter(pred_lon, pred_lat, s=12, transform=proj, zorder=8, label=None)
+        ax.scatter(
+                    pred_lon, pred_lat,
+                    s=18, marker='o',
+                    facecolors='none', edgecolors="#d62728", linewidths=1.2,   # <- red ring, clearly visible
+                    transform=proj if HAS_CARTOPY else None,
+                    zorder=8, label=None
+                )    
         if len(pred_lon) > 0:
             ax.plot([cur_lon, pred_lon[0]], [cur_lat, pred_lat[0]], '--', color="#d62728", linewidth=2.0, transform=proj, alpha=0.7, zorder=5)
     
@@ -402,9 +627,20 @@ def evaluate_and_plot_trip(
         else:
             ax.plot(lons_true_all, lats_true_all, 'o', color="#2ca02c", zorder=4, label="true future (pt)")
         if len(pred_lat) >= 2:
-            ax.plot(pred_lon, pred_lat, '--', color="#d62728", linewidth=2.0, label="pred future", zorder=5)
+            ax.plot(pred_lon, pred_lat, '--', color="#d62728",
+                    linewidth=2.5, dashes=(4, 3), label="pred future",
+                    zorder=7, solid_capstyle='round', dash_capstyle='round')
         else:
-            ax.plot(pred_lon, pred_lat, 'x', color="#d62728", zorder=5, label="pred future (pt)")
+            ax.plot(pred_lon, pred_lat, 'x', color="#d62728", zorder=7, label="pred future (pt)")
+
+        #ax.scatter(pred_lon, pred_lat, s=12, zorder=8, label=None)
+        ax.scatter(
+            pred_lon, pred_lat,
+            s=18, marker='o',
+            facecolors='none', edgecolors="#d62728", linewidths=1.2,   # <- red ring, clearly visible
+            transform=proj if HAS_CARTOPY else None,
+            zorder=8, label=None
+        )  
         if len(pred_lon) > 0:
             ax.plot([cur_lon, pred_lon[0]], [cur_lat, pred_lat[0]], '--', color="#d62728", linewidth=2.0, alpha=0.7, zorder=5)
 

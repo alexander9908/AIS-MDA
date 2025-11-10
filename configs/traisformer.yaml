@@ -22,8 +22,8 @@ bins:
   lon_min: 6.0
   lon_max: 16.0
   sog_max: 50.0
-  n_lat: 256
-  n_lon: 512
+  n_lat: 384
+  n_lon: 768
   n_sog: 50
   n_cog: 72
 

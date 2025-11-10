@@ -304,10 +304,10 @@ class TrAISformer(nn.Module):
             return torch.where(logit < thresh, torch.full_like(logit, -1e9), logit)
 
         # ---- GLOBAL sampler knobs (sane defaults) ----
-        LAMBDA_CONT = 0.08     # continuity; higher = stickier
-        ALPHA_DIR   = 1.00     # push along heading from COG/SOG
-        BETA_TURN   = 0.25     # discourage sharp reversals
-        STEP_SCALE  = 0.60     # how far ahead the heading “aims” (0.5–0.8 good)
+        LAMBDA_CONT = 0.03     # continuity; higher = stickier
+        ALPHA_DIR   = 0.30     # push along heading from COG/SOG
+        BETA_TURN   = 0.35     # discourage sharp reversals
+        STEP_SCALE  = 0.80     # how far ahead the heading “aims” (0.5–0.8 good)
 
         wm = self.water_mask.to(device) if (self.use_water_mask and self.water_mask is not None) else None
 
