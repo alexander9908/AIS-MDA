@@ -1,6 +1,7 @@
 import pickle
 import os
 import numpy as np
+from tqdm import tqdm
 
 def remove_non_cargo_tanker(preprocessed_dir):
     
@@ -12,7 +13,7 @@ def remove_non_cargo_tanker(preprocessed_dir):
         print(f"Vessel types file not found at {vessel_types_path}.")
         return
     
-    if 'train' in (os.listdir(preprocessed_dir) and os.path.isdir(os.path.join(preprocessed_dir, 'train'))) and \
+    if ('train' in os.listdir(preprocessed_dir) and os.path.isdir(os.path.join(preprocessed_dir, 'train'))) and \
         len(os.listdir(os.path.join(preprocessed_dir, 'train'))) > 0: # Train/val/test split exists
         # Unsplit
         for split in ['train', 'val', 'test']:
@@ -40,8 +41,10 @@ def remove_non_cargo_tanker(preprocessed_dir):
         os.rename(file_path, dst_path)
     
     # Filter cargo tanker
-    for fname in os.listdir(preprocessed_dir):
-        if not fname.endswith('.npy'):
+    for fname in tqdm(os.listdir(preprocessed_dir)):
+        if not fname.endswith('.pkl'):
+            continue
+        elif fname == "vessel_types.pkl":
             continue
         vessel_mmsi = int(fname.split('_')[0])
         vessel_type = vessel_types.get(vessel_mmsi, 0)
