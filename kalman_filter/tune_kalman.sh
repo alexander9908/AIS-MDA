@@ -18,18 +18,18 @@
 #BSUB -N
 
 ### Output and error files
-#BSUB -o hpc_jobs/logs/kalman_tune_%J.out
-#BSUB -e hpc_jobs/logs/kalman_tune_%J.err
+#BSUB -o Output_%J.out
+#BSUB -e Output_%J.err
 
 
 ### cd to repo dir
 cd ~/AIS-MDA
 
-### activate environment
-. .venv/bin/activate
-
-### load python module
+### load python module FIRST (before venv)
 module swap python3/3.13.2
+
+### activate environment (after module load)
+source .venv/bin/activate
 
 ### Run Kalman Filter hyperparameter tuning
 ### This will perform grid search over process/measurement noise parameters

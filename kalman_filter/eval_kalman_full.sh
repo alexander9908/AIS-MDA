@@ -18,18 +18,18 @@
 #BSUB -N
 
 ### Output and error files
-#BSUB -o hpc_jobs/logs/kalman_eval_%J.out
-#BSUB -e hpc_jobs/logs/kalman_eval_%J.err
+#BSUB -o Output_%J.out
+#BSUB -e Output_%J.err
 
 
 ### cd to repo dir
 cd ~/AIS-MDA
 
-### activate environment
-. .venv/bin/activate
-
-### load python module
+### load python module FIRST (before venv)
 module swap python3/3.13.2
+
+### activate environment (after module load)
+source .venv/bin/activate
 
 ### Run Kalman Filter evaluation on ALL data
 ### This will process all trajectories with window=64, horizon=12
