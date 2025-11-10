@@ -18,8 +18,8 @@
 #BSUB -N
 
 ### Output and error files
-#BSUB -o hpc_jobs/logs/Output_%J.out
-#BSUB -e hpc_jobs/logs/Output_%J.err
+#BSUB -o Output_%J.out
+#BSUB -e Output_%J.err
 
 
 ### cd to repo dir
@@ -43,7 +43,7 @@ echo "Start time: $(date)"
 
 python -m kalman_filter.baselines.train_kalman \
     --final_dir $FINAL_DIR \
-    --window_size 64 \
+    --window 64 \
     --horizon 12 \
     --val_frac 0.15 \
     --test_frac 0.15
