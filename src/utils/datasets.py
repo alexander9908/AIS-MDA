@@ -104,8 +104,7 @@ def pipeline_adapter(window=64, horizon=12, output_features=2, filter_short=True
     
     return decorator
 
-@pipeline_adapter(window=64, horizon=12, output_features=2, filter_short=True)
-class AISDataset(Dataset):
+class _AISDataset(Dataset):
     """Customized Pytorch dataset that loads from disk.
     """
     def __init__(self, 
@@ -172,3 +171,55 @@ class AISDataset(Dataset):
         time_start = torch.tensor(V["traj"][0, 4], dtype=torch.int)
         
         return seq, mask, seqlen, mmsi, time_start
+    
+def create_ais_dataset(data_dir,
+                       max_seqlen=96,
+                       dtype=torch.float32,
+                       device=torch.device("cpu"),
+                       file_extension=".pkl",
+                       use_pipeline_adapter=True,
+                       window=64,
+                       horizon=12,
+                       output_features=2,
+                       filter_short=True):
+    """Factory function to create AIS dataset with optional pipeline adapter.
+    
+    Args:
+        data_dir: path to directory containing data files
+        max_seqlen: max sequence length
+        dtype: torch dtype for tensors
+        device: torch device
+        file_extension: file extension to look for
+        use_pipeline_adapter: if True, wrap with pipeline adapter
+        window: Input sequence length (only used if use_pipeline_adapter=True)
+        horizon: Prediction horizon (only used if use_pipeline_adapter=True)
+        output_features: Number of target features (only used if use_pipeline_adapter=True)
+        filter_short: Filter short trajectories (only used if use_pipeline_adapter=True)
+    
+    Returns:
+        Dataset instance, either raw or adapted
+    """
+    if use_pipeline_adapter:
+        # Apply decorator to base class dynamically
+        AdaptedClass = pipeline_adapter(
+            window=window,
+            horizon=horizon,
+            output_features=output_features,
+            filter_short=filter_short
+        )(_AISDataset)
+        
+        return AdaptedClass(
+            data_dir=data_dir,
+            max_seqlen=max_seqlen,
+            dtype=dtype,
+            device=device,
+            file_extension=file_extension
+        )
+    else:
+        return _AISDataset(
+            data_dir=data_dir,
+            max_seqlen=max_seqlen,
+            dtype=dtype,
+            device=device,
+            file_extension=file_extension
+        )

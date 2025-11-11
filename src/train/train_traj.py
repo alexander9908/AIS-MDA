@@ -5,12 +5,13 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset, random_split
-from src.utils.datasets import AISDataset
+from src.utils.datasets import create_ais_dataset
 from src.utils.logging import CustomLogger
 from src.train.arguments import add_arguments
 
 from ..config import load_config
 from ..models import GRUSeq2Seq, TPTrans
+from src.models.traisformer import TrAISformer
 
 def huber_loss(pred, target, delta: float = 1.0):
     # SmoothL1Loss uses 'beta' as the Huber delta
@@ -25,8 +26,15 @@ def main(cfg: str, logger: CustomLogger):
     out_dir = Path(cfg.get("out_dir", "data/checkpoints"))
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    ds_train = AISDataset(preprocessed_dataset_dir + "train", max_seqlen=96)
-    ds_val = AISDataset(preprocessed_dataset_dir + "val", max_seqlen=96)
+    ds_train = create_ais_dataset(
+        data_dir=preprocessed_dataset_dir + "train",
+        max_seqlen=96,
+        use_pipeline_adapter=True if cfg["model"]["name"] in ["gru", "tptrans"] else False)
+    ds_val = create_ais_dataset(
+        data_dir=preprocessed_dataset_dir + "val",
+        max_seqlen=96,
+        use_pipeline_adapter=True if cfg["model"]["name"] in ["gru", "tptrans"] else False)
+    
     logger.info(f"Training samples: {len(ds_train)}")
     logger.info(f"Validation samples: {len(ds_val)}")
     has_val = True
@@ -45,7 +53,7 @@ def main(cfg: str, logger: CustomLogger):
             horizon=horizon,
         )
         model_name = "GRU"
-    else:
+    elif cfg["model"]["name"] == "tptrans":
         model = TPTrans(
             feat_dim,
             d_model=cfg["model"].get("d_model", 192),
@@ -55,8 +63,12 @@ def main(cfg: str, logger: CustomLogger):
             horizon=horizon,
         )
         model_name = "TPTrans"
+    elif cfg["model"]["name"] == "traisformer":
+        model = TrAISformer(
+            cfg
+        )
+        model_name = "TrAISformer"
 
-    # after you set model_name = "GRU" or "TPTrans"
     ckpt_name = f"traj_{model_name.lower()}.pt"
     best_path = out_dir / ckpt_name
 
@@ -75,23 +87,35 @@ def main(cfg: str, logger: CustomLogger):
     for epoch in range(1, epochs + 1):
         model.train()
         total = 0.0
-        for xb, yb in dl_train:
-            xb = xb.to(device, non_blocking=True)
-            yb = yb.to(device, non_blocking=True)
+        for batch in dl_train:
+            if cfg["model"]["name"] == "traisformer":
+                # TrAISformer: raw dataset returns (seq, mask, seqlen, mmsi, time_start)
+                seq, mask, seqlen, mmsi, time_start = batch
+                seq = seq.to(device, non_blocking=True)
+                mask = mask.to(device, non_blocking=True)
+            else:
+                # TPTrans/GRU: pipeline adapter returns (X, Y)
+                xb, yb = batch
+                xb = xb.to(device, non_blocking=True)
+                yb = yb.to(device, non_blocking=True)
 
             opt.zero_grad(set_to_none=True)
             with torch.cuda.amp.autocast(enabled=torch.cuda.is_available()):
-                pred = model(xb)
-                loss = huber_loss(pred, yb, delta=delta)
+                if cfg["model"]["name"] == "traisformer":
+                    # TrAISformer expects full sequence and mask
+                    logits, loss = model(seq, masks=mask, with_targets=True)
+                else:
+                    # TPTrans/GRU - external loss computation
+                    pred = model(xb)
+                    loss = huber_loss(pred, yb, delta=delta)
 
             scaler_amp.scale(loss).backward()
-            # Gradient clipping for stability
             scaler_amp.unscale_(opt)
             nn.utils.clip_grad_norm_(model.parameters(), clip_norm)
             scaler_amp.step(opt)
             scaler_amp.update()
 
-            total += loss.item() * xb.size(0)
+            total += loss.item() * (seq.size(0) if cfg["model"]["name"] == "traisformer" else xb.size(0))
 
         train_loss = total / len(ds_train)
         msg = f"epoch {epoch}: train_loss={train_loss:.4f}"
@@ -101,22 +125,32 @@ def main(cfg: str, logger: CustomLogger):
             model.eval()
             vtotal = 0.0
             with torch.no_grad(), torch.cuda.amp.autocast(enabled=torch.cuda.is_available()):
-                for xb, yb in dl_val:
-                    xb = xb.to(device, non_blocking=True)
-                    yb = yb.to(device, non_blocking=True)
-                    pred = model(xb)
-                    vtotal += huber_loss(pred, yb, delta=delta).item() * xb.size(0)
+                for batch in dl_val:
+                    if cfg["model"]["name"] == "traisformer":
+                        # TrAISformer: (seq, mask, seqlen, mmsi, time_start)
+                        seq, mask, seqlen, mmsi, time_start = batch
+                        seq = seq.to(device, non_blocking=True)
+                        mask = mask.to(device, non_blocking=True)
+                        
+                        logits, loss = model(seq, masks=mask, with_targets=True)
+                        vtotal += loss.item() * seq.size(0)
+                    else:
+                        # TPTrans/GRU: (X, Y)
+                        xb, yb = batch
+                        xb = xb.to(device, non_blocking=True)
+                        yb = yb.to(device, non_blocking=True)
+                        pred = model(xb)
+                        vtotal += huber_loss(pred, yb, delta=delta).item() * xb.size(0)
+    
             val_loss = vtotal / len(ds_val)
             msg += f"  val_loss={val_loss:.4f}"
             metric_dir["val_loss"] = val_loss
-            # Save best
             if val_loss < best_val:
                 best_val = val_loss
                 torch.save(model.state_dict(), best_path)
         else:
-            # No val set → keep overwriting; last epoch wins
             torch.save(model.state_dict(), best_path)
-        
+
         logger.log_metrics(metric_dir, step=epoch)
         logger.info(msg)
         
@@ -142,6 +176,13 @@ if __name__ == "__main__":
             key: value.split(',') if isinstance(value, str) and ',' in value else value
             for key, value in config_dict.items()
         }
+        
+        # Model args conform to nested dict
+        for arg in ["model_name", "d_model", "nhead", "enc_layers", "dec_layers"]:
+            if arg in config_dict:
+                if "model" not in config_dict:
+                    config_dict["model"] = dict()
+                config_dict["model"][arg.replace("model_", "")] = config_dict.pop(arg)
     else:
         config_dict = load_config(args.config)
         

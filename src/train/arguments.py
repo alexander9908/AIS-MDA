@@ -64,9 +64,9 @@ def add_arguments(parser: ArgumentParser) -> None:
     parser.add_argument(
         "--model_name",
         type=str,
-        choices=["gru", "tptrans"],
+        choices=["gru", "tptrans", "traisformer"],
         default="tptrans",
-        help="Type of model to use: 'gru' or 'tptrans'.",
+        help="Type of model to use",
     )
     parser.add_argument(
         "--d_model",
