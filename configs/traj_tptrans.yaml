@@ -1,5 +1,5 @@
 task: trajectory
-processed_dir: data/map_reduced/
+processed_dir: data/map_reduced/train/
 out_dir: data/checkpoints
 window: 64
 horizon: 12

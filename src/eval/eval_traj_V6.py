@@ -28,6 +28,14 @@ plt.rcParams.update({
     "font.size": 11,
 })
 
+# Optional: contextily basemap support
+try:
+    import contextily as ctx
+    from xyzservices import providers as xz
+    _HAS_CTX = True
+except Exception:
+    _HAS_CTX = False
+
 # ---------------- Helpers ----------------
 def parse_trip(fname: str) -> Tuple[int, int]:
     base = os.path.basename(fname).replace("_processed.pkl", "")
@@ -421,15 +429,50 @@ def evaluate_and_plot_trip(
     lon_min, lon_max, lat_min, lat_max = ext
 
     fig, ax = plt.subplots()
-    try:
-        wm = make_water_mask(lat_min, lat_max, lon_min, lon_max, n_lat=256, n_lon=512)
-        lat_edges = np.linspace(lat_min, lat_max, 256+1)
-        lon_edges = np.linspace(lon_min, lon_max, 512+1)
-        ax.pcolormesh(lon_edges, lat_edges, (~wm).astype(float),
-                      shading="auto", cmap="Greys", alpha=0.12)
-    except Exception:
-        pass
+    # Basemap background (with robust fallback)
+    drew_background = False
+    if getattr(args, "style", "classic") != "classic" and _HAS_CTX:
+        try:
+            style = str(args.style).strip().lower()
+            providers = {
+                "satellite": xz.Esri.WorldImagery,
+                "terrain":   xz.Stamen.Terrain,
+                "toner":     xz.Stamen.TonerLite,
+                "watercolor": xz.Stamen.Watercolor,
+                "positron":  xz.CartoDB.Positron,
+                "osm":       xz.OpenStreetMap.Mapnik,
+            }
+            src = providers.get(style, xz.Esri.WorldImagery)
+            # Set extent first so contextily knows the window
+            ax.set_xlim(lon_min, lon_max)
+            ax.set_ylim(lat_min, lat_max)
+            ctx.add_basemap(ax, source=src, crs="EPSG:4326", attribution_size=4)
+            drew_background = True
+        except Exception:
+            drew_background = False
 
+    if not drew_background:
+        # Fallback: land/water shading with soft colors for a more "map-like" look
+        try:
+            wm = make_water_mask(lat_min, lat_max, lon_min, lon_max, n_lat=256, n_lon=512)
+            lat_edges = np.linspace(lat_min, lat_max, 256+1)
+            lon_edges = np.linspace(lon_min, lon_max, 512+1)
+            # land=True -> 1, water=False -> 0
+            land = (~wm).astype(float)
+            # Colors: slightly darker blue water and darker gray land
+            water_rgba = (0.50, 0.68, 0.88, 0.90)  # darker blue
+            land_rgba  = (0.78, 0.78, 0.78, 0.90)  # darker gray
+            # Build an RGBA image
+            img = np.zeros((land.shape[0], land.shape[1], 4), dtype=float)
+            img[...] = water_rgba
+            img[land > 0.5] = land_rgba
+            ax.pcolormesh(lon_edges, lat_edges, land, shading="auto", alpha=0.0)  # set up grid
+            ax.imshow(img, extent=(lon_min, lon_max, lat_min, lat_max), origin="lower", aspect="auto")
+        except Exception:
+            # Minimal fallback: light grey
+            ax.set_facecolor((0.96, 0.96, 0.96))
+
+    # Classic solid lines as before
     ax.plot(lons_past, lats_past, lw=1.6, color="#2a77ff", alpha=0.9, label="past")
     ax.plot(lons_true_all, lats_true_all, lw=2.2, color="#2aaa2a", alpha=0.95, label="true (future)")
     if len(pred_lon) >= 2:
@@ -447,7 +490,7 @@ def evaluate_and_plot_trip(
     ax.set_title(f"MMSI {mmsi} · Trip {tid} · Cut {args.pred_cut:.1f}% · ADE {ade:.2f} km · FDE {fde:.2f} km")
     ax.legend(loc="upper right", frameon=False)
     fig.tight_layout()
-    fig.savefig(fname_png, dpi=180)
+    fig.savefig(fname_png, dpi=int(getattr(args, "dpi", 180)))
     plt.close(fig)
 
     return {
@@ -481,6 +524,17 @@ def main():
     p.add_argument("--lon_max", type=float, default=None)
     p.add_argument("--cpu", action="store_true")
     p.add_argument("--speed_max", type=float, default=30.0, help="for TPTrans normalization if speeds present")
+    p.add_argument("--style", choices=["classic","satellite","terrain","toner","watercolor","positron","osm"],
+                   default="classic", help="Basemap style (satellite requires contextily/xyzservices).")
+    p.add_argument("--dpi", type=int, default=180, help="Output figure DPI")
+    # TrAISformer sampler tuning (optional)
+    p.add_argument("--lambda_cont", type=float, default=None, help="Continuity weight (lower = less sticky)")
+    p.add_argument("--alpha_dir", type=float, default=None, help="Direction push weight (higher = moves more along heading)")
+    p.add_argument("--beta_turn", type=float, default=None, help="Turn penalty (lower = more willing to turn/move)")
+    p.add_argument("--step_scale", type=float, default=None, help="Step scale factor (higher = larger steps)")
+    p.add_argument("--sog_floor", type=float, default=None, help="Speed floor in knots for direction prior")
+    p.add_argument("--no_first_neigh", action="store_true", help="Disable first-step 8-neighborhood constraint")
+    p.add_argument("--allow_same_cell", action="store_true", help="Allow staying in the same cell (not recommended)")
 
     args = p.parse_args()
     Path(args.out_dir).mkdir(parents=True, exist_ok=True)
@@ -492,6 +546,18 @@ def main():
 
     feat_dim = 4
     model = build_model(args.model, args.ckpt, feat_dim=feat_dim, horizon=args.horizon)
+
+    # If TrAISformer, apply optional sampler overrides
+    if args.model.lower() == "traisformer" and hasattr(model, "set_sampler"):
+        model.set_sampler(
+            lambda_cont=args.lambda_cont,
+            alpha_dir=args.alpha_dir,
+            beta_turn=args.beta_turn,
+            step_scale=args.step_scale,
+            sog_floor=args.sog_floor,
+            first_step_neigh=(not args.no_first_neigh),
+            forbid_same_cell=(not args.allow_same_cell),
+        )
 
     metrics: List[Dict[str,Any]] = []
     plotted = 0; skipped = 0

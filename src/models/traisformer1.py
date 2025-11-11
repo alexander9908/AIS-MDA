@@ -180,6 +180,22 @@ class TrAISformer(nn.Module):
             # default to all-water (no snapping) if mask not available
             self.register_buffer("water_mask", torch.ones(bins.n_lat, bins.n_lon, dtype=torch.bool), persistent=False)
 
+        # Sampler knobs (can be adjusted from outside before calling generate)
+        self.sampler = {
+            "lambda_cont": 0.04,   # continuity; higher = stickier
+            "alpha_dir":   1.60,   # push along heading from COG/SOG
+            "beta_turn":   0.55,   # discourage sharp reversals
+            "step_scale":  0.70,   # how far ahead the heading aims
+            "sog_floor":   3.00,   # knots floor used only for direction prior
+            "forbid_same_cell": True,
+            "first_step_neigh":   True,
+        }
+
+    def set_sampler(self, **kwargs):
+        for k, v in kwargs.items():
+            if k in self.sampler and v is not None:
+                self.sampler[k] = v
+
     # ---- internal helpers ----
     def _embed_step(self, idxs: Dict[str, torch.Tensor]) -> torch.Tensor:
         """
@@ -307,7 +323,7 @@ class TrAISformer(nn.Module):
         z_past = self.posenc(z_past)
 
         B = z_past.size(0)
-        y = self.start_token.expand(B, 1, -1)  # [B,1,D]
+        y_seq = self.start_token.expand(B, 1, -1)  # [B,1,D]
         out = {k: [] for k in ["lat", "lon", "sog", "cog"]}
 
         def _mask_topk(logit: torch.Tensor, k: Optional[int]) -> torch.Tensor:
@@ -318,11 +334,14 @@ class TrAISformer(nn.Module):
             thresh = v[:, -1].unsqueeze(-1)
             return torch.where(logit < thresh, torch.full_like(logit, -1e9), logit)
 
-        # ---- GLOBAL sampler knobs (sane defaults) ----
-        LAMBDA_CONT = 0.04     # continuity; higher = stickier
-        ALPHA_DIR   = 1.60     # push along heading from COG/SOG
-        BETA_TURN   = 0.55     # discourage sharp reversals
-        STEP_SCALE  = 0.70     # how far ahead the heading “aims” (0.5–0.8 good)
+        # ---- Sampler knobs ----
+        LAMBDA_CONT = float(self.sampler.get("lambda_cont", 0.04))
+        ALPHA_DIR   = float(self.sampler.get("alpha_dir",   1.60))
+        BETA_TURN   = float(self.sampler.get("beta_turn",   0.55))
+        STEP_SCALE  = float(self.sampler.get("step_scale",  0.70))
+        SOG_FLOOR   = float(self.sampler.get("sog_floor",   3.00))
+        FORBID_SAME = bool(self.sampler.get("forbid_same_cell", True))
+        FIRST_NEIGH = bool(self.sampler.get("first_step_neigh", True))
 
         wm = self.water_mask.to(device) if (self.use_water_mask and self.water_mask is not None) else None
 
@@ -342,8 +361,8 @@ class TrAISformer(nn.Module):
 
         for t in range(L):
             # decode next-step logits
-            tgt_mask = self._causal_mask(y.size(1), device)
-            dec = self.decoder(tgt=self.posenc(y), memory=z_past, tgt_mask=tgt_mask)
+            tgt_mask = self._causal_mask(y_seq.size(1), device)
+            dec = self.decoder(tgt=self.posenc(y_seq), memory=z_past, tgt_mask=tgt_mask)
             h = dec[:, -1, :]  # [B, D]
 
             logit_lat = self.head_lat(h) / max(temperature, 1e-6)
@@ -380,7 +399,7 @@ class TrAISformer(nn.Module):
                 cog_deg = self.bins.bin_to_cog_mid(cog_idx_b.unsqueeze(0)).item()
 
                 # ---- NEW: speed floor for the PRIOR only ----
-                sog_eff = max(sog_kn, 3.0)  # knots (2–4 works)
+                sog_eff = max(sog_kn, SOG_FLOOR)
 
                 # ---- NEW: blend COG with geometric track bearing from last two past points ----
                 lat_prev2_deg = self.bins.bin_to_lat_mid(prev2_lat[b].unsqueeze(0)).item()
@@ -391,9 +410,9 @@ class TrAISformer(nn.Module):
                 # bearing (prev2 -> prev)
                 dlo = math.radians(lon_prev_deg - lon_prev2_deg)
                 la1 = math.radians(lat_prev2_deg); la2 = math.radians(lat_prev_deg)
-                y = math.sin(dlo) * math.cos(la2)
-                x = math.cos(la1)*math.sin(la2) - math.sin(la1)*math.cos(la2)*math.cos(dlo)
-                bearing_track = (math.degrees(math.atan2(y, x)) + 360.0) % 360.0
+                y_bear = math.sin(dlo) * math.cos(la2)
+                x_bear = math.cos(la1)*math.sin(la2) - math.sin(la1)*math.cos(la2)*math.cos(dlo)
+                bearing_track = (math.degrees(math.atan2(y_bear, x_bear)) + 360.0) % 360.0
                 
                 heading_used = (0.5 * bearing_track + 0.5 * cog_deg) % 360.0  # 50/50 blend
 
@@ -408,8 +427,8 @@ class TrAISformer(nn.Module):
                 score_2d = score_2d - ALPHA_DIR * dir_cost
 
                 # AFTER you apply the coastline (land) mask and BEFORE sampling:
-                score_2d[i0, j0] = -torch.inf    # don't allow staying in the same cell
-                # (use -1e9 if you'd rather avoid infs)
+                if FORBID_SAME:
+                    score_2d[i0, j0] = -1e9  # don't allow staying in the same cell
 
                 # discourage staying in the same cell (use this batch's previous cell)
                 #score_2d[i0, j0] -= 0.4
@@ -432,7 +451,7 @@ class TrAISformer(nn.Module):
                 score_2d[i0, j0] = -1e9
 
                 # --- First step stabilization ---
-                if t == 0:
+                if FIRST_NEIGH and t == 0:
                     # 8-neighborhood only, then greedy
                     iL = max(0, i0 - 1); iR = min(self.bins.n_lat - 1, i0 + 1)
                     jL = max(0, j0 - 1); jR = min(self.bins.n_lon - 1, j0 + 1)
@@ -495,7 +514,7 @@ class TrAISformer(nn.Module):
                 "sog": sog_idx.unsqueeze(1),
                 "cog": cog_idx.unsqueeze(1),
             })  # [B,1,emb]
-            y = torch.cat([y, self.in_proj(step_embed)], dim=1)
+            y_seq = torch.cat([y_seq, self.in_proj(step_embed)], dim=1)
 
 
         # finalize
