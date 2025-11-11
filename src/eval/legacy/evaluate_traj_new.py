@@ -6,10 +6,10 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 from src.utils.datasets import AISDataset
-from ...models.tptrans_new import TPTransNew
+from ...models.legacy.tptrans_new import TPTransNew
 from ...models import GRUSeq2Seq  # keep GRU baseline available
 from ..metrics_traj import ade, fde
-from ...models.tptrans_new import TPTransNew
+from ...models.legacy.tptrans_new import TPTransNew
 
 def main():
     ap = argparse.ArgumentParser(description="Evaluate trajectory model on Map-Reduce dataset (AISDataset).")

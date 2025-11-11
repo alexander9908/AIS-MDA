@@ -11,7 +11,7 @@ import torch.nn.functional as F
 # Optional: fast boolean mask of water cells on a lat/lon grid
 # (expects signature: make_water_mask(lat_min, lat_max, lon_min, lon_max, n_lat, n_lon) -> np.bool_[n_lat, n_lon])
 try:
-    from src.eval.build_water_mask import make_water_mask
+    from src.eval.legacy.build_water_mask import make_water_mask
     _HAS_WATER_MASK = True
 except Exception:
     _HAS_WATER_MASK = False

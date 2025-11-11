@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from ..models import GRUSeq2Seq
+from ...models import GRUSeq2Seq
 
 def huber(delta=1.0):
     return nn.SmoothL1Loss(beta=delta)
