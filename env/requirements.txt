@@ -14,7 +14,7 @@ geopandas
 h3
 cartopy
 pyproj
-
+roaring-landmask
 
 # Parallel helpers
 pandarallel

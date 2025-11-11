@@ -1,4 +1,4 @@
-# src/models/TrAISformer.py
+# src/models/traisformer1.py
 import math
 from dataclasses import dataclass
 from typing import Dict, Tuple, Optional, Literal
@@ -11,11 +11,10 @@ import torch.nn.functional as F
 # Optional: fast boolean mask of water cells on a lat/lon grid
 # (expects signature: make_water_mask(lat_min, lat_max, lon_min, lon_max, n_lat, n_lon) -> np.bool_[n_lat, n_lon])
 try:
-    from src.eval.build_water_mask import make_water_mask
+    from src.eval.build_water_mask_V2 import make_water_mask
     _HAS_WATER_MASK = True
 except Exception:
     _HAS_WATER_MASK = False
-
 
 # -----------------------------
 # Utilities: bins & four-hot I/O
@@ -304,10 +303,10 @@ class TrAISformer(nn.Module):
             return torch.where(logit < thresh, torch.full_like(logit, -1e9), logit)
 
         # ---- GLOBAL sampler knobs (sane defaults) ----
-        LAMBDA_CONT = 0.03     # continuity; higher = stickier
-        ALPHA_DIR   = 0.30     # push along heading from COG/SOG
-        BETA_TURN   = 0.35     # discourage sharp reversals
-        STEP_SCALE  = 0.80     # how far ahead the heading “aims” (0.5–0.8 good)
+        LAMBDA_CONT = 0.04     # continuity; higher = stickier
+        ALPHA_DIR   = 1.60     # push along heading from COG/SOG
+        BETA_TURN   = 0.55     # discourage sharp reversals
+        STEP_SCALE  = 0.70     # how far ahead the heading “aims” (0.5–0.8 good)
 
         wm = self.water_mask.to(device) if (self.use_water_mask and self.water_mask is not None) else None
 
@@ -325,7 +324,7 @@ class TrAISformer(nn.Module):
         ii_full = torch.arange(nlat, device=device).unsqueeze(1).float()  # [nlat,1]
         jj_full = torch.arange(nlon, device=device).unsqueeze(0).float()  # [1,nlon]
 
-        for _ in range(L):
+        for t in range(L):
             # decode next-step logits
             tgt_mask = self._causal_mask(y.size(1), device)
             dec = self.decoder(tgt=self.posenc(y), memory=z_past, tgt_mask=tgt_mask)
@@ -364,15 +363,41 @@ class TrAISformer(nn.Module):
                 sog_kn = self.bins.bin_to_sog_mid(sog_idx_b.unsqueeze(0)).item()
                 cog_deg = self.bins.bin_to_cog_mid(cog_idx_b.unsqueeze(0)).item()
 
-                # aim a bit ahead along heading; scale by speed and grid size
-                step_mag_i = STEP_SCALE * nlat * (sog_kn / max(self.bins.sog_max, 1.0)) / 100.0
-                step_mag_j = STEP_SCALE * nlon * (sog_kn / max(self.bins.sog_max, 1.0)) / 100.0
-                dy = -math.sin(math.radians(cog_deg)) * step_mag_i
-                dx =  math.cos(math.radians(cog_deg)) * step_mag_j
+                # ---- NEW: speed floor for the PRIOR only ----
+                sog_eff = max(sog_kn, 3.0)  # knots (2–4 works)
+
+                # ---- NEW: blend COG with geometric track bearing from last two past points ----
+                lat_prev2_deg = self.bins.bin_to_lat_mid(prev2_lat[b].unsqueeze(0)).item()
+                lon_prev2_deg = self.bins.bin_to_lon_mid(prev2_lon[b].unsqueeze(0)).item()
+                lat_prev_deg  = self.bins.bin_to_lat_mid(prev_lat[b].unsqueeze(0)).item()
+                lon_prev_deg  = self.bins.bin_to_lon_mid(prev_lon[b].unsqueeze(0)).item()
+                
+                # bearing (prev2 -> prev)
+                dlo = math.radians(lon_prev_deg - lon_prev2_deg)
+                la1 = math.radians(lat_prev2_deg); la2 = math.radians(lat_prev_deg)
+                y = math.sin(dlo) * math.cos(la2)
+                x = math.cos(la1)*math.sin(la2) - math.sin(la1)*math.cos(la2)*math.cos(dlo)
+                bearing_track = (math.degrees(math.atan2(y, x)) + 360.0) % 360.0
+                
+                heading_used = (0.5 * bearing_track + 0.5 * cog_deg) % 360.0  # 50/50 blend
+
+                # ---- aim a bit ahead along heading_used; scale by speed and grid size ----
+                step_mag_i = STEP_SCALE * self.bins.n_lat * (sog_eff / max(self.bins.sog_max, 1.0)) / 100.0
+                step_mag_j = STEP_SCALE * self.bins.n_lon * (sog_eff / max(self.bins.sog_max, 1.0)) / 100.0
+                dy = -math.sin(math.radians(heading_used)) * step_mag_i
+                dx =  math.cos(math.radians(heading_used)) * step_mag_j
                 ic = i0 + dy; jc = j0 + dx
 
                 dir_cost = (ii_full - ic).abs() + (jj_full - jc).abs()
                 score_2d = score_2d - ALPHA_DIR * dir_cost
+
+                # AFTER you apply the coastline (land) mask and BEFORE sampling:
+                score_2d[i0, j0] = -torch.inf    # don't allow staying in the same cell
+                # (use -1e9 if you'd rather avoid infs)
+
+                # discourage staying in the same cell (use this batch's previous cell)
+                #score_2d[i0, j0] -= 0.4
+
 
                 # anti-zigzag vs last move (keep this INSIDE the b-loop)
                 di_prev = float(i0 - int(prev2_lat[b].item()))
@@ -387,17 +412,30 @@ class TrAISformer(nn.Module):
                 if wm is not None:
                     score_2d = torch.where(wm, score_2d, torch.full_like(score_2d, -1e9))
 
-                # pick the (lat,lon) pair
-                if sampling == "sample":
-                    flat = torch.distributions.Categorical(logits=score_2d.flatten()).sample()
-                else:
-                    flat = torch.argmax(score_2d)
-                li = (flat // nlon).to(device)
-                lj = (flat %  nlon).to(device)
+                # Forbid staying in the same cell
+                score_2d[i0, j0] = -1e9
 
+                # --- First step stabilization ---
+                if t == 0:
+                    # 8-neighborhood only, then greedy
+                    iL = max(0, i0 - 1); iR = min(self.bins.n_lat - 1, i0 + 1)
+                    jL = max(0, j0 - 1); jR = min(self.bins.n_lon - 1, j0 + 1)
+                    neigh = torch.zeros_like(score_2d, dtype=torch.bool)
+                    neigh[iL:iR+1, jL:jR+1] = True
+                    score_2d = torch.where(neigh, score_2d, torch.full_like(score_2d, -1e9))
+                    flat = torch.argmax(score_2d.reshape(-1))            # Tensor (0-dim)
+                else:
+                    # usual sampling/greedy for subsequent steps
+                    flat = (torch.distributions.Categorical(logits=score_2d.reshape(-1)).sample()
+                            if sampling == "sample" else torch.argmax(score_2d.reshape(-1)))
+
+                # convert flat (0-dim tensor) -> (i,j) tensors
+                li = (flat // nlon).long().to(device)
+                lj = (flat %  nlon).long().to(device)
                 lat_idx_list.append(li)
                 lon_idx_list.append(lj)
-
+                
+            # finalize each step
             lat_idx = torch.stack(lat_idx_list, dim=0)   # [B]
             lon_idx = torch.stack(lon_idx_list, dim=0)
 
@@ -414,10 +452,10 @@ class TrAISformer(nn.Module):
             prev_lat, prev_lon = lat_idx, lon_idx
 
             # append & embed for next step
-            out["lat"].append(lat_idx)
-            out["lon"].append(lon_idx)
-            out["sog"].append(sog_idx)
-            out["cog"].append(cog_idx)
+            out["lat"].append(lat_idx.long())
+            out["lon"].append(lon_idx.long())
+            out["sog"].append(sog_idx.long())
+            out["cog"].append(cog_idx.long())
 
             step_embed = self._embed_step({
                 "lat": lat_idx.unsqueeze(1),
@@ -429,7 +467,10 @@ class TrAISformer(nn.Module):
 
         # finalize
         for k in out:
-            out[k] = torch.stack(out[k], dim=1)
+            out[k] = torch.stack(
+                [torch.as_tensor(x, device=device) for x in out[k]],
+                dim=1
+            ).long()
 
         # final belt-and-suspenders coastline check
         if self.use_water_mask and self.water_mask is not None:

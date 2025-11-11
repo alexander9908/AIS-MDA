@@ -12,7 +12,7 @@ from ..models import GRUSeq2Seq, TPTrans
 from ..models.traisformer1 import TrAISformer, BinSpec
 
 
-from src.eval.build_water_mask import make_water_mask, snap_to_water_path
+from src.eval.build_water_mask_V2 import make_water_mask, snap_to_water_path
 import numpy as np
 from collections import deque
 
