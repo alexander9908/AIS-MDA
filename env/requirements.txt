@@ -12,6 +12,11 @@ polars
 shapely
 geopandas
 h3
+cartopy
+pyproj
+roaring-landmask
+contextily
+xyzservices
 
 # Parallel helpers
 pandarallel

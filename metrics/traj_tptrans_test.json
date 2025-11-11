@@ -3,6 +3,7 @@
   "model": "tptrans",
   "split": "data/map_reduced/test",
   "ckpt": "data/checkpoints/traj_tptrans.pt",
-  "ade": 0.5084993243217468,
-  "fde": 0.30110955238342285
+  "ade": 0.1309753805398941,
+  "fde": 0.24281807243824005,
+  "count": 75
 }

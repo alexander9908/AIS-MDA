@@ -23,7 +23,7 @@ Columns: LAT, LON, SOG, COG, HEADING, ROT, NAV_STT, TIMESTAMP, MMSI
 
 
 
-
+TrAISformer: https://github.com/CIA-Oceanix/TrAISformer
 
 
 
