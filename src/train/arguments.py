@@ -27,6 +27,11 @@ def add_arguments(parser: ArgumentParser) -> None:
         default="",
         help="Comma-separated list of tags for the WandB run.",
     )
+    parser.add_argument(
+        "--use_wandb",
+        action="store_true",
+        help="Whether to use WandB for logging.",
+    )
     
     # Data args
     parser.add_argument(

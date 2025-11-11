@@ -28,9 +28,10 @@ class Customtqdm(tqdm):
             super().__init__(*args, **kwargs)
 
 class CustomLogger:
-    def __init__(self, project_name, group=None, run_name=None):
+    def __init__(self, project_name, group=None, run_name=None, use_wandb=True):
         
         try:
+            assert use_wandb # Will fall to except if False
             self.run = wandb.init(project=project_name, group=group, name=run_name)
             self.using_wandb = True
         except:

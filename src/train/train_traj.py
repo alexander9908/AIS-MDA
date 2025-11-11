@@ -185,8 +185,9 @@ if __name__ == "__main__":
                 config_dict["model"][arg.replace("model_", "")] = config_dict.pop(arg)
     else:
         config_dict = load_config(args.config)
-        
-    logger = CustomLogger(project_name="AIS-MDA", group=config_dict.get("wandb_group", None), run_name=config_dict.get("run_name", None))
+    
+    use_wandb = config_dict.get("use_wandb", True)
+    logger = CustomLogger(project_name="AIS-MDA", group=config_dict.get("wandb_group", None), run_name=config_dict.get("run_name", None), use_wandb=use_wandb)
     if config_dict.get("wandb_tags", []):
         logger.add_tags(config_dict["wandb_tags"])
         
