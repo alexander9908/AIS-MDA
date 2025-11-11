@@ -183,16 +183,32 @@ class TrAISformer(nn.Module):
     # ---- internal helpers ----
     def _embed_step(self, idxs: Dict[str, torch.Tensor]) -> torch.Tensor:
         """
-        idxs[*] shape: [B, T] (or [B,1] for a single-step)
+        idxs[*] can be scalar, [B], or [B,T]; we coerce to [B,T] LongTensor.
         returns: [B, T, d_emb_concat]
         """
-        def _bt(x):
-            return x if x.dim() == 2 else x.unsqueeze(1)
-        e_lat = self.lat_emb(_bt(idxs["lat"]))
-        e_lon = self.lon_emb(_bt(idxs["lon"]))
-        e_sog = self.sog_emb(_bt(idxs["sog"]))
-        e_cog = self.cog_emb(_bt(idxs["cog"]))
+        dev = self.start_token.device
+
+        def _bt_idx(x: torch.Tensor) -> torch.Tensor:
+            # accept tensors, numpy, lists, scalars; coerce to Long on model device
+            x = torch.as_tensor(x, device=dev)
+            if x.dim() == 0:
+                x = x.view(1, 1)
+            elif x.dim() == 1:
+                x = x.unsqueeze(1)  # [B] -> [B,1]
+            elif x.dim() > 2:
+                x = x.squeeze()
+                if x.dim() == 1:
+                    x = x.unsqueeze(1)
+                elif x.dim() != 2:
+                    raise ValueError(f"Expected <=2 dims for bin indices, got {tuple(x.shape)}")
+            return x.long().contiguous()
+
+        e_lat = self.lat_emb(_bt_idx(idxs["lat"]))
+        e_lon = self.lon_emb(_bt_idx(idxs["lon"]))
+        e_sog = self.sog_emb(_bt_idx(idxs["sog"]))
+        e_cog = self.cog_emb(_bt_idx(idxs["cog"]))
         return torch.cat([e_lat, e_lon, e_sog, e_cog], dim=-1)
+
 
     def _causal_mask(self, T: int, device: torch.device) -> torch.Tensor:
         # mask future positions for autoregressive decoding
@@ -267,7 +283,7 @@ class TrAISformer(nn.Module):
                 )
 
         return loss
-
+    
     # ---- generation (stochastic sampling or greedy) ----
     @torch.no_grad()
     def generate(
@@ -432,12 +448,21 @@ class TrAISformer(nn.Module):
                 # convert flat (0-dim tensor) -> (i,j) tensors
                 li = (flat // nlon).long().to(device)
                 lj = (flat %  nlon).long().to(device)
-                lat_idx_list.append(li)
-                lon_idx_list.append(lj)
-                
-            # finalize each step
-            lat_idx = torch.stack(lat_idx_list, dim=0)   # [B]
-            lon_idx = torch.stack(lon_idx_list, dim=0)
+
+                # be defensive: coerce before appending
+                lat_idx_list.append(torch.as_tensor(li, dtype=torch.long, device=device))
+                lon_idx_list.append(torch.as_tensor(lj, dtype=torch.long, device=device))
+
+
+            # finalize each step — coerce every element before stacking
+            lat_idx = torch.stack(
+                [torch.as_tensor(x, dtype=torch.long, device=device) for x in lat_idx_list],
+                dim=0
+            )
+            lon_idx = torch.stack(
+                [torch.as_tensor(x, dtype=torch.long, device=device) for x in lon_idx_list],
+                dim=0
+            )
 
             # sample sog/cog for the actual token (independent)
             if sampling == "sample":
@@ -447,15 +472,22 @@ class TrAISformer(nn.Module):
                 sog_idx = _mask_topk(logit_sog, top_k).argmax(dim=-1)
                 cog_idx = _mask_topk(logit_cog, top_k).argmax(dim=-1)
 
+            # now coerce dtype/device
+            sog_idx = sog_idx.long().to(device)
+            cog_idx = cog_idx.long().to(device)
+
+            # sanity (all are [B])
+            assert lat_idx.shape == lon_idx.shape == sog_idx.shape == cog_idx.shape, "batch shape mismatch"
+
             # update continuity anchors (keep last two)
             prev2_lat, prev2_lon = prev_lat, prev_lon
             prev_lat, prev_lon = lat_idx, lon_idx
 
             # append & embed for next step
-            out["lat"].append(lat_idx.long())
-            out["lon"].append(lon_idx.long())
-            out["sog"].append(sog_idx.long())
-            out["cog"].append(cog_idx.long())
+            out["lat"].append(lat_idx)
+            out["lon"].append(lon_idx)
+            out["sog"].append(sog_idx)
+            out["cog"].append(cog_idx)
 
             step_embed = self._embed_step({
                 "lat": lat_idx.unsqueeze(1),
@@ -465,12 +497,14 @@ class TrAISformer(nn.Module):
             })  # [B,1,emb]
             y = torch.cat([y, self.in_proj(step_embed)], dim=1)
 
+
         # finalize
         for k in out:
             out[k] = torch.stack(
-                [torch.as_tensor(x, device=device) for x in out[k]],
+                [torch.as_tensor(x, dtype=torch.long, device=device) for x in out[k]],
                 dim=1
-            ).long()
+            )
+
 
         # final belt-and-suspenders coastline check
         if self.use_water_mask and self.water_mask is not None:
