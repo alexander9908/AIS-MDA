@@ -31,22 +31,25 @@ module swap python3/3.13.2
 ### activate environment (after module load)
 source .venv/bin/activate
 
-### Run Kalman Filter evaluation on ALL data
-### This will process all trajectories with window=64, horizon=12
-### IMPORTANT: Update FINAL_DIR to point to your processed pickle files on HPC
-FINAL_DIR="/dtu/blackhole/10/178320/preprocessed_test"  # Your *_processed.pkl files
+### Run Kalman Filter evaluation on pre-split data
+DATA_ROOT="/dtu/blackhole/10/178320/preprocessed_1/final"
+TRAIN_DIR="${DATA_ROOT}/train"
+VAL_DIR="${DATA_ROOT}/val"
+TEST_DIR="${DATA_ROOT}/test"
 
-echo "Starting Kalman Filter evaluation on full dataset..."
-echo "Data directory: $FINAL_DIR"
+echo "Starting Kalman Filter evaluation on pre-split dataset..."
+echo "Train directory: $TRAIN_DIR"
+echo "Val directory: $VAL_DIR"
+echo "Test directory: $TEST_DIR"
 echo "Window size: 64, Horizon: 12"
 echo "Start time: $(date)"
 
 python -m kalman_filter.baselines.train_kalman \
-    --final_dir $FINAL_DIR \
+    --train_dir "${TRAIN_DIR}" \
+    --val_dir "${VAL_DIR}" \
+    --test_dir "${TEST_DIR}" \
     --window 64 \
     --horizon 12 \
-    --val_frac 0.15 \
-    --test_frac 0.15 \
     --max_windows 999999
 
 echo "End time: $(date)"

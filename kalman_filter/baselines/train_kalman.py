@@ -27,18 +27,22 @@ from src.eval.metrics_traj import ade, fde
 LAT, LON, SOG, COG, HEADING, ROT, NAV_STT, TIMESTAMP, MMSI = list(range(9))
 
 
-def load_trajectories(final_dir: str, max_files: int | None = None) -> List[np.ndarray]:
+def load_trajectories(data_dir: str, max_files: int | None = None) -> List[np.ndarray]:
     """
     Load processed trajectories from pickle files.
     
     Args:
-        final_dir: Directory containing *_processed.pkl files
+        data_dir: Directory containing *_processed.pkl files
         max_files: Maximum number of files to load (None = all)
         
     Returns:
         List of trajectory arrays, each shape (T, 9)
     """
-    paths = [Path(final_dir) / f for f in os.listdir(final_dir) 
+    if not Path(data_dir).exists():
+        print(f"Warning: Directory not found: {data_dir}")
+        return []
+        
+    paths = [Path(data_dir) / f for f in os.listdir(data_dir) 
              if f.endswith("_processed.pkl")]
     
     if max_files:
@@ -199,15 +203,23 @@ def evaluate_kalman(kf: TrajectoryKalmanFilter,
 
 def main():
     parser = argparse.ArgumentParser(description="Train Kalman Filter baseline for AIS trajectory prediction")
-    parser.add_argument("--final_dir", default="data/map_reduce_final", help="Directory with processed pickles")
+    
+    # Arguments for pre-split directories
+    parser.add_argument("--train_dir", help="Directory with pre-split training data")
+    parser.add_argument("--val_dir", help="Directory with pre-split validation data")
+    parser.add_argument("--test_dir", help="Directory with pre-split test data")
+
+    # Original arguments for automatic splitting
+    parser.add_argument("--final_dir", help="Directory with all processed pickles (for automatic splitting)")
+    
     parser.add_argument("--out_dir", default="data/checkpoints", help="Output directory for results")
     parser.add_argument("--window", type=int, default=64, help="Input window size")
     parser.add_argument("--horizon", type=int, default=12, help="Prediction horizon")
-    parser.add_argument("--max_files", type=int, default=None, help="Max trajectory files to load")
-    parser.add_argument("--max_windows", type=int, default=10000, help="Max windows for eval")
+    parser.add_argument("--max_files", type=int, default=None, help="Max trajectory files to load per split")
+    parser.add_argument("--max_windows", type=int, default=999999, help="Max windows for eval")
     parser.add_argument("--tune", action="store_true", help="Tune hyperparameters")
-    parser.add_argument("--val_frac", type=float, default=0.2, help="Validation fraction")
-    parser.add_argument("--test_frac", type=float, default=0.1, help="Test fraction")
+    parser.add_argument("--val_frac", type=float, default=0.2, help="Validation fraction (if not using pre-split dirs)")
+    parser.add_argument("--test_frac", type=float, default=0.1, help="Test fraction (if not using pre-split dirs)")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     
     # Kalman Filter parameters
@@ -216,21 +228,31 @@ def main():
     parser.add_argument("--measurement_noise", type=float, default=1e-4)
     
     args = parser.parse_args()
-    
-    # Load trajectories
-    trajectories = load_trajectories(args.final_dir, max_files=args.max_files)
-    
-    if len(trajectories) == 0:
-        print("No trajectories loaded. Exiting.")
-        return
-    
-    # Split data
-    train_trajs, val_trajs, test_trajs = split_trajectories(
-        trajectories, 
-        val_frac=args.val_frac,
-        test_frac=args.test_frac,
-        seed=args.seed
-    )
+
+    # --- Data Loading ---
+    if args.train_dir and args.val_dir and args.test_dir:
+        print("Loading data from pre-split directories...")
+        train_trajs = load_trajectories(args.train_dir, max_files=args.max_files)
+        val_trajs = load_trajectories(args.val_dir, max_files=args.max_files)
+        test_trajs = load_trajectories(args.test_dir, max_files=args.max_files)
+        print(f"Loaded splits: Train={len(train_trajs)}, Val={len(val_trajs)}, Test={len(test_trajs)}")
+    elif args.final_dir:
+        print("Loading data from single directory and splitting automatically...")
+        trajectories = load_trajectories(args.final_dir, max_files=args.max_files)
+        if len(trajectories) == 0:
+            print("No trajectories loaded. Exiting.")
+            return
+        train_trajs, val_trajs, test_trajs = split_trajectories(
+            trajectories, 
+            val_frac=args.val_frac,
+            test_frac=args.test_frac,
+            seed=args.seed
+        )
+    else:
+        raise ValueError("You must provide either --train_dir, --val_dir, and --test_dir OR --final_dir.")
+
+    # Initialize results dictionaries
+    val_results, test_results = {}, {}
     
     # Tune parameters if requested
     if args.tune:
