@@ -20,11 +20,54 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from kalman_filter.kalman_filter import TrajectoryKalmanFilter, KalmanFilterParams, tune_kalman_filter
-from src.eval.metrics_traj import ade, fde
+# from src.eval.metrics_traj import ade, fde # Using custom Haversine-based metrics now
 
 
 # Column indices for MapReduce processed data
 LAT, LON, SOG, COG, HEADING, ROT, NAV_STT, TIMESTAMP, MMSI = list(range(9))
+
+# Geographic bounds for denormalization
+LAT_MIN, LAT_MAX = 54.0, 59.0
+LON_MIN, LON_MAX = 5.0, 17.0
+EARTH_RADIUS_KM = 6371.0
+
+
+def haversine_distance(lat1, lon1, lat2, lon2):
+    """Calculate the great-circle distance between two points on the earth."""
+    lat1, lon1, lat2, lon2 = map(np.radians, [lat1, lon1, lat2, lon2])
+    dlon = lon2 - lon1
+    dlat = lat2 - lat1
+    a = np.sin(dlat / 2.0)**2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2.0)**2
+    c = 2 * np.arcsin(np.sqrt(a))
+    return EARTH_RADIUS_KM * c * 1000  # Return distance in meters
+
+
+def denormalize_positions(norm_coords: np.ndarray) -> np.ndarray:
+    """Convert normalized [0,1] coordinates back to real lat/lon degrees."""
+    denorm = norm_coords.copy()
+    denorm[..., 0] = denorm[..., 0] * (LAT_MAX - LAT_MIN) + LAT_MIN
+    denorm[..., 1] = denorm[..., 1] * (LON_MAX - LON_MIN) + LON_MIN
+    return denorm
+
+
+def ade_haversine(pred: np.ndarray, true: np.ndarray) -> float:
+    """Average Displacement Error using Haversine distance."""
+    pred_deg = denormalize_positions(pred)
+    true_deg = denormalize_positions(true)
+    
+    distances = haversine_distance(pred_deg[..., 0], pred_deg[..., 1], 
+                                   true_deg[..., 0], true_deg[..., 1])
+    return np.mean(distances)
+
+
+def fde_haversine(pred: np.ndarray, true: np.ndarray) -> float:
+    """Final Displacement Error using Haversine distance."""
+    pred_deg = denormalize_positions(pred[:, -1, :])
+    true_deg = denormalize_positions(true[:, -1, :])
+    
+    distances = haversine_distance(pred_deg[..., 0], pred_deg[..., 1], 
+                                   true_deg[..., 0], true_deg[..., 1])
+    return np.mean(distances)
 
 
 def load_trajectories(data_dir: str, max_files: int | None = None) -> List[np.ndarray]:
@@ -180,21 +223,24 @@ def evaluate_kalman(kf: TrajectoryKalmanFilter,
     
     predictions = np.concatenate(all_preds, axis=0)
     
-    # Compute metrics
-    ade_val = float(ade(predictions, Y))
-    fde_val = float(fde(predictions, Y))
+    # --- Metrics Calculation (Haversine) ---
+    # Note: ADE and FDE are now in METERS, not normalized units.
+    ade_val = ade_haversine(predictions, Y)
+    fde_val = fde_haversine(predictions, Y)
     
-    # Per-horizon ADE
+    # Per-horizon ADE (in meters)
     horizon = Y.shape[1]
     per_horizon_ade = []
     for h in range(horizon):
-        err = np.linalg.norm(predictions[:, h, :] - Y[:, h, :], axis=-1)
-        per_horizon_ade.append(float(err.mean()))
+        pred_h = denormalize_positions(predictions[:, h, :])
+        true_h = denormalize_positions(Y[:, h, :])
+        err_h = haversine_distance(pred_h[:, 0], pred_h[:, 1], true_h[:, 0], true_h[:, 1])
+        per_horizon_ade.append(float(np.mean(err_h)))
     
     results = {
-        "ade": ade_val,
-        "fde": fde_val,
-        "per_horizon_ade": per_horizon_ade,
+        "ade_meters": ade_val,
+        "fde_meters": fde_val,
+        "per_horizon_ade_meters": per_horizon_ade,
         "n_samples": n_samples
     }
     
@@ -280,19 +326,19 @@ def main():
     X_val, Y_val = create_windows(val_trajs, args.window, args.horizon, max_windows=args.max_windows)
     if len(X_val) > 0:
         val_results = evaluate_kalman(kf, X_val, Y_val)
-        print(f"Validation - ADE: {val_results['ade']:.6f}, FDE: {val_results['fde']:.6f}")
+        print(f"Validation - ADE: {val_results['ade_meters']:.2f}m, FDE: {val_results['fde_meters']:.2f}m")
     
     # Evaluate on test set
     print("\n=== Test Evaluation ===")
     X_test, Y_test = create_windows(test_trajs, args.window, args.horizon, max_windows=args.max_windows)
     if len(X_test) > 0:
         test_results = evaluate_kalman(kf, X_test, Y_test)
-        print(f"Test - ADE: {test_results['ade']:.6f}, FDE: {test_results['fde']:.6f}")
+        print(f"Test - ADE: {test_results['ade_meters']:.2f}m, FDE: {test_results['fde_meters']:.2f}m")
         
         # Print per-horizon results
-        print("\nPer-Horizon ADE:")
-        for h, ade_h in enumerate(test_results['per_horizon_ade'], 1):
-            print(f"  Step {h}: {ade_h:.6f}")
+        print("\nPer-Horizon ADE (meters):")
+        for h, ade_h in enumerate(test_results['per_horizon_ade_meters'], 1):
+            print(f"  Step {h}: {ade_h:.2f}m")
     
     # Save results
     out_dir = Path(args.out_dir)

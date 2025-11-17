@@ -36,38 +36,72 @@ def denormalize_positions(positions: np.ndarray,
 def plot_single_trajectory(ax, window, target, prediction, denorm=True):
     """Plot a single trajectory comparison."""
     
+    # Denormalize positions to real lat/lon for plotting
     if denorm:
-        window = denormalize_positions(window[:, [LAT, LON]])
-        target = denormalize_positions(target)
-        prediction = denormalize_positions(prediction)
+        window_deg = denormalize_positions(window[:, [LAT, LON]])
+        target_deg = denormalize_positions(target)
+        prediction_deg = denormalize_positions(prediction)
     else:
-        window = window[:, [LAT, LON]]
-    
+        # If data is already in degrees, just use it
+        window_deg = window[:, [LAT, LON]]
+        target_deg = target
+        prediction_deg = prediction
+
     # Plot historical window
-    ax.plot(window[:, 1], window[:, 0], 'b-', linewidth=2, label='Historical', alpha=0.7)
-    ax.plot(window[-1, 1], window[-1, 0], 'bo', markersize=8, label='Last Known')
+    ax.plot(window_deg[:, 1], window_deg[:, 0], 'b-', linewidth=1.5, label='History (5h 20m)', alpha=0.8)
+    ax.plot(window_deg[-1, 1], window_deg[-1, 0], 'bo', markersize=6, label='Last Known Position')
     
-    # Plot ground truth
-    ax.plot(target[:, 1], target[:, 0], 'g-', linewidth=2, label='Ground Truth', alpha=0.7)
-    ax.plot(target[-1, 1], target[-1, 0], 'gs', markersize=10, label='True Endpoint')
+    # Plot ground truth future
+    ax.plot(target_deg[:, 1], target_deg[:, 0], 'g-', linewidth=2, label='True Future (1h)', alpha=0.8)
+    ax.plot(target_deg[-1, 1], target_deg[-1, 0], 'gs', markersize=8, label='True Endpoint')
     
     # Plot prediction
-    ax.plot(prediction[:, 1], prediction[:, 0], 'r--', linewidth=2, label='Kalman Prediction', alpha=0.7)
-    ax.plot(prediction[-1, 1], prediction[-1, 0], 'r^', markersize=10, label='Predicted Endpoint')
+    ax.plot(prediction_deg[:, 1], prediction_deg[:, 0], 'r--', linewidth=2, label='Kalman Prediction', alpha=0.8)
+    ax.plot(prediction_deg[-1, 1], prediction_deg[-1, 0], 'r^', markersize=8, label='Predicted Endpoint')
     
     # Connect last known to first predicted
-    ax.plot([window[-1, 1], prediction[0, 1]], 
-            [window[-1, 0], prediction[0, 0]], 'r:', alpha=0.5)
+    ax.plot([window_deg[-1, 1], prediction_deg[0, 1]], 
+            [window_deg[-1, 0], prediction_deg[0, 0]], 'r:', alpha=0.6)
     
-    ax.set_xlabel('Longitude (°)' if denorm else 'Longitude (normalized)')
-    ax.set_ylabel('Latitude (°)' if denorm else 'Latitude (normalized)')
-    ax.legend(loc='best', fontsize=8)
-    ax.grid(True, alpha=0.3)
+    ax.set_xlabel('Longitude')
+    ax.set_ylabel('Latitude')
+    ax.legend(loc='best', fontsize=9)
+    ax.grid(True, linestyle='--', alpha=0.4)
+
+
+def add_basemap(ax, water_mask_path: str | None = None):
+    """Adds a basemap to the plot, either from a water mask or contextily."""
+    
+    # Define the geographic bounds for the Denmark region
+    LAT_MIN, LAT_MAX = 54.0, 59.0
+    LON_MIN, LON_MAX = 5.0, 17.0
+    
+    ax.set_xlim(LON_MIN, LON_MAX)
+    ax.set_ylim(LAT_MIN, LAT_MAX)
     ax.set_aspect('equal')
+
+    # Try to use contextily for a live map
+    try:
+        import contextily as ctx
+        print("Adding basemap with contextily...")
+        ctx.add_basemap(ax, crs='EPSG:4326', source=ctx.providers.OpenStreetMap.Mapnik, attribution_size=5)
+    except ImportError:
+        print("Contextily not found. Falling back to water mask.")
+        if water_mask_path and Path(water_mask_path).exists():
+            try:
+                mask = plt.imread(water_mask_path)
+                ax.imshow(mask, extent=(LON_MIN, LON_MAX, LAT_MIN, LAT_MAX), origin="lower", aspect="auto")
+            except Exception as e:
+                print(f"Could not load water mask: {e}. Using plain background.")
+                ax.set_facecolor('#c5e3ff') # Light blue for water
+        else:
+            print("No water mask found. Using plain background.")
+            ax.set_facecolor('#c5e3ff') # Light blue for water
 
 
 def visualize_predictions(final_dir: str, 
                          output_dir: str,
+                         water_mask_path: str | None,
                          window_size: int = 64,
                          horizon: int = 12,
                          n_examples: int = 6):
@@ -159,6 +193,9 @@ def visualize_predictions(final_dir: str,
         row = i // 3
         col = i % 3
         ax = fig.add_subplot(gs[row, col])
+        
+        # Add basemap first
+        add_basemap(ax, water_mask_path)
         
         plot_single_trajectory(ax, ex['window'], ex['target'], ex['prediction'])
         
@@ -268,6 +305,7 @@ def main():
     parser = argparse.ArgumentParser(description="Visualize Kalman Filter predictions")
     parser.add_argument("--final_dir", default="data/map_reduce_final")
     parser.add_argument("--output_dir", default="data/figures/kalman", help="Directory to save visualizations")
+    parser.add_argument("--water_mask", default="kalman_filter/assets/water_mask.png", help="Path to water mask image")
     parser.add_argument("--window", type=int, default=64)
     parser.add_argument("--horizon", type=int, default=12)
     parser.add_argument("--n_examples", type=int, default=6)
@@ -281,6 +319,7 @@ def main():
     visualize_predictions(
         args.final_dir,
         output_dir=args.output_dir,
+        water_mask_path=args.water_mask,
         window_size=args.window,
         horizon=args.horizon,
         n_examples=args.n_examples

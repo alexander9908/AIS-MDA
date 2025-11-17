@@ -38,15 +38,30 @@ mkdir -p logs
 # Using the test set for visualization
 DATA_DIR="/dtu/blackhole/10/178320/preprocessed_1/final/test"
 OUTPUT_DIR="kalman_filter/visualizations"
+WATER_MASK="kalman_filter/assets/water_mask.png"
 
 echo "Starting Kalman Filter visualization..."
 echo "Data directory: $DATA_DIR"
 echo "Output directory: $OUTPUT_DIR"
 echo "Start time: $(date)"
 
+# First, ensure the water mask exists by running the build script
+# This requires a shapefile, which you must download manually.
+# See kalman_filter/build_water_mask.py for instructions.
+SHAPEFILE_PATH="/path/to/your/ne_10m_land.shp" # IMPORTANT: UPDATE THIS PATH
+
+if [ -f "$SHAPEFILE_PATH" ]; then
+    echo "Building water mask..."
+    python -m kalman_filter.build_water_mask --shapefile "$SHAPEFILE_PATH" --output "$WATER_MASK"
+else
+    echo "Warning: Shapefile not found at $SHAPEFILE_PATH. Visualization will proceed without a detailed map background."
+    echo "See kalman_filter/build_water_mask.py for instructions on downloading the shapefile."
+fi
+
 python -m kalman_filter.baselines.visualize_kalman \
     --final_dir $DATA_DIR \
     --output_dir $OUTPUT_DIR \
+    --water_mask $WATER_MASK \
     --window 64 \
     --horizon 12
 
