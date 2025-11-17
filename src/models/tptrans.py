@@ -5,7 +5,7 @@ import torch.nn as nn
 
 
 class ConvBlock(nn.Module):
-    def __init__(self, in_ch, out_ch, k=3, d=1):
+    def __init__(self, in_ch, out_ch, k = 3, d = 1):#  k=3, d=1):
         super().__init__()
         pad = (k - 1) // 2 * d
         self.net = nn.Sequential(
@@ -23,10 +23,10 @@ class TPTrans(nn.Module):
     def __init__(
         self,
         feat_dim: int,
-        d_model: int = 192,
-        nhead: int = 4,
-        enc_layers: int = 4,
-        dec_layers: int = 2,
+        d_model: int = 512, # int = 192,
+        nhead: int = 8, # 4,
+        enc_layers: int = 8, # int = 4, # int = 4,
+        dec_layers: int = 4, # int = 2,# int = 2,
         horizon: int = 12,
         dropout: float = 0.1,
     ):
