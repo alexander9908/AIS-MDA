@@ -135,7 +135,7 @@ def build_model(kind: str, ckpt: str, feat_dim: int, horizon: int):
     sd_top = torch.load(ckpt, map_location="cpu")
 
     if kind.lower() == "tptrans":
-        model = TPTrans(feat_dim=feat_dim, d_model=512, nhead=4, enc_layers = 4, dec_layers = 2, horizon = horizon) #  d_model=192 , nhead=4, enc_layers=4, dec_layers=2, horizon=horizon)
+        model = TPTrans(feat_dim=feat_dim, d_model=512, nhead = 8, enc_layers = 8, dec_layers = 4, horizon = horizon) # nhead=4, enc_layers = 4, dec_layers = 2, horizon = horizon) #  d_model=192 , nhead=4, enc_layers=4, dec_layers=2, horizon=horizon)
         model.load_state_dict(clean_state_dict(sd_top), strict=False)
         return model
 

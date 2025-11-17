@@ -24,9 +24,9 @@ class TPTrans(nn.Module):
         self,
         feat_dim: int,
         d_model: int = 512, # int = 192,
-        nhead: int = 4,
-        enc_layers: int = 8, # int = 4,
-        dec_layers: int = 4,# int = 2,
+        nhead: int = 8, # 4,
+        enc_layers: int = 8, # int = 4, # int = 4,
+        dec_layers: int = 4, # int = 2,# int = 2,
         horizon: int = 12,
         dropout: float = 0.1,
     ):
