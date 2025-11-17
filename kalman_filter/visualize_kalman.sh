@@ -21,8 +21,8 @@ mkdir -p logs
 
 # --- Install/Verify roaring-landmask ---
 # The PBF file will be downloaded to the cache on first run.
-echo "Verifying/installing roaring-landmask..."
-pip install roaring-landmask
+# echo "Verifying/installing roaring-landmask..."
+# pip install roaring-landmask
 
 # --- Run Visualization ---
 # This script generates the high-quality, zoomed-in plots for the final 3-hour evaluation.
@@ -31,7 +31,7 @@ python -m kalman_filter.baselines.visualize_kalman \
     --final_dir /dtu/blackhole/10/178320/preprocessed_1/final/test \
     --output_dir data/figures/kalman_final_3h \
     --horizon 36 \
-    --n_examples 6
+    --n_examples 10
 
 echo "Visualization script finished."
 echo "Plots saved in data/figures/kalman_final_3h"
