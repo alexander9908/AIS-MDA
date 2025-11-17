@@ -131,149 +131,170 @@ def add_basemap(ax, water_mask_path: str | None = None, bounds: tuple[float, flo
         ax.set_facecolor('#aadaff')
 
 
-def visualize_predictions(final_dir: str, 
-                         output_dir: str,
-                         water_mask_path: str | None,
-                         window_size: int = 64,
-                         horizon: int = 12,
-                         n_examples: int = 6):
-    """
-    Create visualization of Kalman Filter predictions.
-    
-    Args:
-        final_dir: Directory with processed pickles
-        output_dir: Directory to save the figures
-        water_mask_path: Path to a fallback water mask image
-        window_size: Input window size
-        horizon: Prediction horizon
-        n_examples: Number of examples to plot
-    """
-    # Load trajectories
-    paths = [Path(final_dir) / f for f in os.listdir(final_dir) 
-             if f.endswith("_processed.pkl")]
-    
-    # Create filter
+def visualize_predictions(final_dir: str,
+                          output_dir: str,
+                          water_mask_path: str | None,
+                          window_size: int = 64,
+                          horizon: int = 12,
+                          n_examples: int = 6,
+                          max_candidates: int = 200,
+                          rng_seed: int = 42):
+    """Render Kalman Filter predictions for representative trajectories."""
+
+    paths = [Path(final_dir) / f for f in os.listdir(final_dir) if f.endswith("_processed.pkl")]
+    if not paths:
+        print(f"No *_processed.pkl files found inside {final_dir}")
+        return
+
     params = KalmanFilterParams(
         process_noise_pos=1e-5,
         process_noise_vel=1e-4,
         measurement_noise=1e-4,
-        dt=300.0
+        dt=300.0,
     )
     kf = TrajectoryKalmanFilter(params)
-    
-    # Select examples
-    np.random.seed(42)
-    examples = []
-    
-    # Ensure paths is a numpy array for np.random.choice
-    path_array = np.array(paths)
-    
-    for path in np.random.choice(path_array, min(len(path_array), 50), replace=False):
+
+    rng = np.random.default_rng(rng_seed)
+    shuffled_indices = rng.permutation(len(paths))
+
+    examples: list[dict] = []
+    target_pool = max(n_examples * 4, n_examples + 8)
+
+    for idx in shuffled_indices:
+        path = paths[int(idx)]
+        if len(examples) >= target_pool:
+            break
+
         try:
             with open(path, "rb") as f:
                 item = pickle.load(f)
-            traj = item["traj"]
-            
-            if len(traj) >= window_size + horizon + 20:
-                # Take middle section
-                mid = len(traj) // 2
-                window = traj[mid:mid + window_size]
-                target = traj[mid + window_size:mid + window_size + horizon, [LAT, LON]]
-                
-                # Predict
-                prediction = kf.predict(window, horizon)
-                
-                # Compute error
-                error = np.linalg.norm(prediction - target, axis=-1).mean()
-                
-                examples.append({
-                    'window': window,
-                    'target': target,
-                    'prediction': prediction,
-                    'error': error,
-                    'mmsi': item['mmsi']
-                })
-                
-                if len(examples) >= n_examples * 2:
-                    break
-        except Exception as e:
-            print(f"Error loading {path}: {e}")
+        except Exception as exc:
+            print(f"Failed to load {path}: {exc}")
             continue
-    
-    if len(examples) == 0:
-        print("No valid examples found")
+
+        traj = item.get("traj")
+        if traj is None or len(traj) < window_size + horizon:
+            continue
+
+        n_candidates = len(traj) - window_size - horizon + 1
+        if n_candidates <= 0:
+            continue
+
+        starts = rng.choice(n_candidates, size=min(n_candidates, 5), replace=False)
+
+        for start_idx in starts:
+            window = traj[start_idx:start_idx + window_size]
+            if window.shape[0] != window_size:
+                continue
+
+            target = traj[start_idx + window_size:start_idx + window_size + horizon, [LAT, LON]]
+            if target.shape[0] != horizon:
+                continue
+
+            try:
+                prediction = kf.predict(window, horizon)
+            except Exception as exc:
+                print(f"Kalman prediction failed for {path.name} (idx {start_idx}): {exc}")
+                continue
+
+            error = float(np.mean(np.linalg.norm(prediction - target, axis=-1)))
+            examples.append({
+                "window": window,
+                "target": target,
+                "prediction": prediction,
+                "error": error,
+                "mmsi": item.get("mmsi", "unknown"),
+                "path": path.name,
+                "start_idx": int(start_idx),
+            })
+
+            if len(examples) >= target_pool:
+                break
+
+    if not examples:
+        print("No valid trajectory windows found for visualization.")
         return
-    
-    # Sort by error and select best, median, worst
-    examples.sort(key=lambda x: x['error'])
-    
-    selected = []
-    categories = []
-    if len(examples) >= n_examples:
-        # Best 2
-        selected.extend(examples[:2])
-        categories.extend(['Best_1', 'Best_2'])
-        # Median 2
-        mid = len(examples) // 2
-        selected.extend(examples[mid-1:mid+1])
-        categories.extend(['Median_1', 'Median_2'])
-        # Worst 2
-        selected.extend(examples[-2:])
-        categories.extend(['Worst_1', 'Worst_2'])
-    else:
-        selected = examples[:n_examples]
-        categories = [f"Example_{i+1}" for i in range(len(selected))]
 
-    print(f"Generating {len(selected)} individual trajectory plots...")
+    examples.sort(key=lambda x: x["error"])
 
-    for ex, cat in zip(selected, categories):
-        # Create a new figure for each plot
+    def select_examples(candidates: list[dict], k: int) -> list[tuple[dict, str]]:
+        k = max(1, min(k, len(candidates)))
+        linspace_idx = np.linspace(0, len(candidates) - 1, k)
+        ordered_indices = []
+        for idx in linspace_idx:
+            rounded = int(round(idx))
+            if rounded not in ordered_indices:
+                ordered_indices.append(rounded)
+        while len(ordered_indices) < k:
+            for extra in range(len(candidates)):
+                if extra not in ordered_indices:
+                    ordered_indices.append(extra)
+                if len(ordered_indices) == k:
+                    break
+
+        selected_pairs: list[tuple[dict, str]] = []
+        for rank, idx in enumerate(ordered_indices, start=1):
+            label: str
+            if rank == 1:
+                label = "best"
+            elif rank == len(ordered_indices):
+                label = "worst"
+            elif rank == (len(ordered_indices) + 1) // 2:
+                label = "median"
+            else:
+                label = f"sample_{rank}"
+            selected_pairs.append((candidates[idx], label))
+        return selected_pairs
+
+    selected = select_examples(examples, n_examples)
+    print(f"Generating {len(selected)} trajectory plots...")
+
+    output_dir_path = Path(output_dir)
+    output_dir_path.mkdir(parents=True, exist_ok=True)
+
+    for rank, (ex, label) in enumerate(selected, start=1):
         fig, ax = plt.subplots(figsize=(10, 10))
-        
-        # Denormalize all points to calculate bounds
-        window_deg = denormalize_positions(ex['window'][:, [LAT, LON]])
-        target_deg = denormalize_positions(ex['target'])
-        prediction_deg = denormalize_positions(ex['prediction'])
-        
+
+        window_deg = denormalize_positions(ex["window"][:, [LAT, LON]])
+        target_deg = denormalize_positions(ex["target"])
+        prediction_deg = denormalize_positions(ex["prediction"])
+
         all_points = np.vstack([window_deg, target_deg, prediction_deg])
-        
-        # Calculate dynamic bounds with padding
         lat_min, lon_min = all_points.min(axis=0)
         lat_max, lon_max = all_points.max(axis=0)
-        
-        lat_pad = (lat_max - lat_min) * 0.2
-        lon_pad = (lon_max - lon_min) * 0.2
-        
+
+        lat_pad = max((lat_max - lat_min) * 0.2, 1e-3)
+        lon_pad = max((lon_max - lon_min) * 0.2, 1e-3)
+
         bounds = (
             lon_min - lon_pad,
             lon_max + lon_pad,
             lat_min - lat_pad,
-            lat_max + lat_pad
+            lat_max + lat_pad,
         )
 
-        # Add basemap first with the dynamic bounds
         add_basemap(ax, water_mask_path, bounds=bounds)
-        
-        # Plot the trajectory, passing denormalized data
-        plot_single_trajectory(ax, ex['window'], ex['target'], ex['prediction'], denorm=True)
-        
-        error_m = ex['error'] * 111000  # Rough conversion to meters (1° ≈ 111km)
-        ax.set_title(f"{cat.replace('_', ' ')} Case - MMSI {ex['mmsi']}\nADE: {ex['error']:.6f} ({error_m:.0f}m)",
-                    fontsize=12)
-        
-        fig.suptitle(f'Kalman Filter Trajectory Prediction',
-                     fontsize=16, fontweight='bold')
-        
+        plot_single_trajectory(ax, ex["window"], ex["target"], ex["prediction"], denorm=True)
+
+        error_m = ex["error"] * 111000
+        title = (
+            f"{label.capitalize()} example – MMSI {ex['mmsi']}\n"
+            f"Start idx {ex['start_idx']} in {ex['path']} | ADE ≈ {error_m:.0f} m"
+        )
+        ax.set_title(title, fontsize=12)
+        fig.suptitle("Kalman Filter Trajectory Prediction", fontsize=16, fontweight="bold")
         plt.tight_layout(rect=(0, 0.03, 1, 0.95))
 
-        # Save individual plot with higher quality
-        output_path = Path(output_dir) / f"kalman_prediction_{cat.lower()}.png"
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        file_label = label.replace(" ", "_")
+        filename = (
+            f"kalman_prediction_{rank:02d}_{file_label}_mmsi-{ex['mmsi']}_idx-{ex['start_idx']}.png"
+        )
+        output_path = output_dir_path / filename
+        plt.savefig(output_path, dpi=300, bbox_inches="tight")
         print(f"  -> Saved {output_path}")
         plt.close(fig)
 
-    print("Individual trajectory plots saved.")
+    print("Finished exporting trajectory plots.")
 
 
 def plot_error_distribution(final_dir: str,
