@@ -45,19 +45,12 @@ echo "Data directory: $DATA_DIR"
 echo "Output directory: $OUTPUT_DIR"
 echo "Start time: $(date)"
 
-# First, ensure the water mask exists by running the build script
-# This requires a shapefile, which you must download manually.
-# See kalman_filter/build_water_mask.py for instructions.
-SHAPEFILE_PATH="/path/to/your/ne_10m_land.shp" # IMPORTANT: UPDATE THIS PATH
+# First, ensure the water mask exists by running the build script.
+# This now uses roaring-landmask and does not require external files.
+echo "Building water mask..."
+python -m kalman_filter.build_water_mask --output "$WATER_MASK"
 
-if [ -f "$SHAPEFILE_PATH" ]; then
-    echo "Building water mask..."
-    python -m kalman_filter.build_water_mask --shapefile "$SHAPEFILE_PATH" --output "$WATER_MASK"
-else
-    echo "Warning: Shapefile not found at $SHAPEFILE_PATH. Visualization will proceed without a detailed map background."
-    echo "See kalman_filter/build_water_mask.py for instructions on downloading the shapefile."
-fi
-
+echo "Running visualization script..."
 python -m kalman_filter.baselines.visualize_kalman \
     --final_dir $DATA_DIR \
     --output_dir $OUTPUT_DIR \

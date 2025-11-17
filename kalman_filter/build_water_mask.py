@@ -1,17 +1,17 @@
 """
-Builds a water mask for Denmark region for map-based plotting.
+Builds a water mask for the Denmark region using roaring-landmask.
 
-This script uses shapefiles to create a simple raster image representing land and water,
-which can be used as a fallback background for trajectory visualizations when a live
-basemap service (like contextily) is unavailable.
+This script creates a simple raster image representing land and water,
+which can be used as a fallback background for trajectory visualizations.
+It is a self-contained solution that does not require external shapefiles.
 """
 from __future__ import annotations
 import argparse
 from pathlib import Path
-import geopandas as gpd
 import numpy as np
 import matplotlib.pyplot as plt
-from shapely.geometry import box
+import matplotlib.colors as mcolors
+from roaring_landmask import RoaringLandmask
 
 # Define the geographic bounds for the Denmark region
 LAT_MIN, LAT_MAX = 54.0, 59.0
@@ -21,46 +21,44 @@ LON_MIN, LON_MAX = 5.0, 17.0
 IMG_WIDTH = 800
 IMG_HEIGHT = int(IMG_WIDTH * (LAT_MAX - LAT_MIN) / (LON_MAX - LON_MIN) * 0.6)
 
-def create_water_mask(shapefile_path: str, output_path: str):
+def create_water_mask(output_path: str | Path):
     """
-    Generates and saves a water mask image from a coastline shapefile.
+    Generates and saves a water mask image using roaring-landmask.
 
     Args:
-        shapefile_path: Path to the world coastline shapefile.
         output_path: Path to save the output PNG image.
     """
-    print(f"Loading shapefile from {shapefile_path}...")
-    try:
-        world = gpd.read_file(shapefile_path)
-    except Exception as e:
-        print(f"Error loading shapefile: {e}")
-        print("Please ensure you have a valid shapefile. You can download one from sites like Natural Earth.")
-        return
-
-    # Define the bounding box for our area of interest
-    denmark_bbox = box(LON_MIN, LAT_MIN, LON_MAX, LAT_MAX)
-
-    # Filter geometries to those intersecting the bounding box
-    print("Clipping geometries to the Denmark region...")
-    land_polygons = world[world.intersects(denmark_bbox)].clip(denmark_bbox)
-
-    if land_polygons.empty:
-        print("No land polygons found in the specified bounding box.")
-        return
-
+    print("Generating water mask with roaring-landmask...")
+    
+    # Create a grid of coordinates
+    lons = np.linspace(LON_MIN, LON_MAX, IMG_WIDTH)
+    lats = np.linspace(LAT_MIN, LAT_MAX, IMG_HEIGHT)
+    lon_grid, lat_grid = np.meshgrid(lons, lats)
+    
+    # Flatten the grid for the landmask query
+    points = np.vstack([lat_grid.ravel(), lon_grid.ravel()]).T
+    
+    # Use roaring-landmask to check which points are on land
+    print("Querying landmask for all points...")
+    landmask = RoaringLandmask()
+    is_land = landmask.contains_many(points[:, 0], points[:, 1])
+    
+    # Reshape the boolean mask back to the grid shape
+    land_mask_grid = is_land.reshape((IMG_HEIGHT, IMG_WIDTH))
+    
     # Create a plot to render the mask
     fig, ax = plt.subplots(figsize=(IMG_WIDTH / 100, IMG_HEIGHT / 100), dpi=100)
-    fig.patch.set_facecolor('#c5e3ff')  # Water color
-    ax.set_facecolor('#c5e3ff')
+    
+    # Use imshow to display the land mask
+    # Water will be 0 (False), Land will be 1 (True)
+    # We use a colormap to define land and water colors
+    cmap = mcolors.ListedColormap(['#c5e3ff', '#f0f0f0']) # Water, Land
+    
+    ax.imshow(land_mask_grid, extent=(LON_MIN, LON_MAX, LAT_MIN, LAT_MAX), 
+              origin='lower', cmap=cmap, interpolation='none')
 
-    # Plot the land polygons
-    land_polygons.plot(ax=ax, color='#f0f0f0', edgecolor='gray', linewidth=0.5)
-
-    # Configure the plot to match the geographic bounds
-    ax.set_xlim(LON_MIN, LON_MAX)
-    ax.set_ylim(LAT_MIN, LAT_MAX)
     ax.set_aspect('equal')
-    ax.axis('off')  # No axes or borders
+    ax.axis('off')
 
     # Save the figure
     output_path = Path(output_path)
@@ -72,12 +70,7 @@ def create_water_mask(shapefile_path: str, output_path: str):
     print("Water mask created successfully.")
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate a water mask for trajectory plotting.")
-    parser.add_argument(
-        "--shapefile",
-        required=True,
-        help="Path to the coastline shapefile (e.g., from Natural Earth)."
-    )
+    parser = argparse.ArgumentParser(description="Generate a water mask for trajectory plotting using roaring-landmask.")
     parser.add_argument(
         "--output",
         default="kalman_filter/assets/water_mask.png",
@@ -85,13 +78,7 @@ def main():
     )
     args = parser.parse_args()
     
-    create_water_mask(args.shapefile, args.output)
+    create_water_mask(args.output)
 
 if __name__ == "__main__":
     main()
-    print("\nTo use this mask, you will need a shapefile.")
-    print("A good option is the Natural Earth 'Land' dataset:")
-    print("1. Go to: https://www.naturalearthdata.com/downloads/10m-physical-vectors/")
-    print("2. Download 'Land' (ne_10m_land.zip)")
-    print("3. Unzip it and provide the path to 'ne_10m_land.shp' to this script.")
-    print(f"\nExample: python -m kalman_filter.build_water_mask --shapefile /path/to/ne_10m_land.shp")
