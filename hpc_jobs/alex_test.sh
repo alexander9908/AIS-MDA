@@ -24,7 +24,7 @@
 #BSUB -R "rusage[mem=8GB]"
 
 ### -- (optional) email for notifications --
-##BSUB -u your_email@dtu.dk
+##BSUB -u s221221@dtu.dk
 
 ### -- send notification at start and completion --
 #BSUB -B
