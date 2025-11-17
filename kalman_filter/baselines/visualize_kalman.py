@@ -67,19 +67,19 @@ def plot_single_trajectory(ax, window, target, prediction, denorm=True):
 
 
 def visualize_predictions(final_dir: str, 
+                         output_dir: str,
                          window_size: int = 64,
                          horizon: int = 12,
-                         n_examples: int = 6,
-                         output_file: str = "data/figures/kalman_predictions.png"):
+                         n_examples: int = 6):
     """
     Create visualization of Kalman Filter predictions.
     
     Args:
         final_dir: Directory with processed pickles
+        output_dir: Directory to save the figures
         window_size: Input window size
         horizon: Prediction horizon
         n_examples: Number of examples to plot
-        output_file: Where to save the figure
     """
     # Load trajectories
     paths = [Path(final_dir) / f for f in os.listdir(final_dir) 
@@ -171,7 +171,7 @@ def visualize_predictions(final_dir: str,
                 fontsize=14, fontweight='bold')
     
     # Save
-    output_path = Path(output_file)
+    output_path = Path(output_dir) / "kalman_predictions.png"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(output_path, dpi=150, bbox_inches='tight')
     print(f"Visualization saved to {output_path}")
@@ -179,10 +179,10 @@ def visualize_predictions(final_dir: str,
 
 
 def plot_error_distribution(final_dir: str,
+                           output_dir: str,
                            window_size: int = 64,
                            horizon: int = 12,
-                           n_samples: int = 500,
-                           output_file: str = "data/figures/kalman_error_dist.png"):
+                           n_samples: int = 500):
     """Plot distribution of prediction errors."""
     
     # Load trajectories
@@ -257,7 +257,7 @@ def plot_error_distribution(final_dir: str,
     
     plt.tight_layout()
     
-    output_path = Path(output_file)
+    output_path = Path(output_dir) / "kalman_error_dist.png"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     plt.savefig(output_path, dpi=150, bbox_inches='tight')
     print(f"Error distribution plot saved to {output_path}")
@@ -267,6 +267,7 @@ def plot_error_distribution(final_dir: str,
 def main():
     parser = argparse.ArgumentParser(description="Visualize Kalman Filter predictions")
     parser.add_argument("--final_dir", default="data/map_reduce_final")
+    parser.add_argument("--output_dir", default="data/figures/kalman", help="Directory to save visualizations")
     parser.add_argument("--window", type=int, default=64)
     parser.add_argument("--horizon", type=int, default=12)
     parser.add_argument("--n_examples", type=int, default=6)
@@ -279,6 +280,7 @@ def main():
     # Trajectory predictions
     visualize_predictions(
         args.final_dir,
+        output_dir=args.output_dir,
         window_size=args.window,
         horizon=args.horizon,
         n_examples=args.n_examples
@@ -287,12 +289,13 @@ def main():
     # Error distributions
     plot_error_distribution(
         args.final_dir,
+        output_dir=args.output_dir,
         window_size=args.window,
         horizon=args.horizon,
         n_samples=args.n_samples
     )
     
-    print("\nDone! Check data/figures/ for output.")
+    print(f"\nDone! Check {args.output_dir} for output.")
 
 
 if __name__ == "__main__":
