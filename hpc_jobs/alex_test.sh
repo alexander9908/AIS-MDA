@@ -1,45 +1,54 @@
 #!/bin/sh
+#
+# TPTrans full 3-month training on DTU A100 80GB
+#
 
-### Job Name:
-BSUB -J test_run_alex_train_traj_v2
+### LSF options --------------------------------------------------------------
+### -- specify queue (A100 GPUs) --
+#BSUB -q gpua100
 
-### Queue Name:
-BSUB -q gpua100
+### -- set the job Name --
+#BSUB -J tptrans_full_3m
 
-### Ensure 80GB GPU used
-BSUB -R "select[gpu80gb]"
+### -- ask for number of CPU cores (min 4 per GPU is recommended) --
+#BSUB -n 4
 
-### Requesting one host
-BSUB -R "span[hosts=1]"
+### -- select resources: 1 GPU in exclusive process mode, 80GB card --
+#BSUB -gpu "num=1:mode=exclusive_process"
+#BSUB -R "select[gpu80gb]"
 
-### Requesting one GPU in exclusive process mode
-BSUB -gpu "num=1:mode=exclusive_process"
+### -- set walltime limit: hh:mm (max 24:00 for GPU queues) --
+#BSUB -W 24:00
 
-### Requesting 4 CPU cores, 4GB memory per core (min 4 cores pr gpu)
-BSUB -n 4
-BSUB -R "rusage[mem=4GB]"
+### -- request system memory (per job, not per core) --
+#BSUB -R "rusage[mem=8GB]"
 
-### Setting a runtime limit of 2 hours
-BSUB -W 2:00
+### -- (optional) email for notifications --
+##BSUB -u your_email@dtu.dk
 
-### Email notification when job begins and ends
-BSUB -B
-BSUB -N
+### -- send notification at start and completion --
+#BSUB -B
+#BSUB -N
 
-### Output and error files
-BSUB -o hpc_jobs/logs/Output_%J.out
-BSUB -e hpc_jobs/logs/Output_%J.err
+### -- output and error files. %J is the job-id --
+#BSUB -o hpc_jobs/logs/tptrans_full_%J.out
+#BSUB -e hpc_jobs/logs/tptrans_full_%J.err
 
+### -- end of LSF options ----------------------------------------------------
 
-### cd to repo dir
+# Show which GPU/node we got (useful for debugging)
+nvidia-smi
+
+# Go to project root
 cd ~/AIS-MDA
 
-### activate environment
+# Activate virtual environment
 . .venv/bin/activate
 
-### load python and cuda modules
+# Load / swap Python & CUDA modules (adjust if your environment differs)
 module swap python3/3.13.2
 module swap cuda/12.6.3
 
-### run script
-python -m src.train.train_traj_V3.py --config_path configs/alex_test.yaml
+# Run the TPTrans training with the full config
+# (make sure configs/traj_tptrans_full.yaml exists and is correct)
+python src/train/train_traj_ES.py --config_path configs/traj_tptrans_full.yaml
