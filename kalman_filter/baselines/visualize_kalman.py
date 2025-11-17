@@ -92,31 +92,43 @@ def add_basemap(ax, water_mask_path: str | None = None, bounds: tuple[float, flo
     try:
         from roaring_landmask import RoaringLandmask
         print("Adding basemap with roaring-landmask...")
-        # Initialize the landmask (it's fast after the first time)
-        mask = RoaringLandmask.from_pbf()
-        # Plot the land
+        # Initialize the landmask (caches data after the first call)
+        mask = RoaringLandmask()
         mask.plot_land(ax, facecolor='#c5e3ff', edgecolor='none')
-        # Set the background to a water color
         ax.set_facecolor('#aadaff')
+        return
     except ImportError:
         print("roaring-landmask not found. Falling back to contextily or image mask.")
-        # Fallback to contextily if available
+    except Exception as exc:
+        print(f"roaring-landmask failed ({exc}). Falling back to contextily or image mask.")
+
+    # Fallback to contextily if available
+    try:
+        import contextily as ctx
+        print("Adding basemap with contextily...")
+        ctx.add_basemap(ax, crs='EPSG:4326', source=ctx.providers.OpenStreetMap.Mapnik, attribution_size=5)
+        return
+    except ImportError:
+        print("Contextily not found. Falling back to water mask image.")
+    except Exception as exc:
+        print(f"Contextily basemap failed ({exc}). Falling back to water mask image.")
+
+    # Final fallback: water mask image or plain background
+    if water_mask_path and Path(water_mask_path).exists():
         try:
-            import contextily as ctx
-            print("Adding basemap with contextily...")
-            ctx.add_basemap(ax, crs='EPSG:4326', source=ctx.providers.OpenStreetMap.Mapnik, attribution_size=5)
-        except ImportError:
-            print("Contextily not found. Falling back to water mask image.")
-            if water_mask_path and Path(water_mask_path).exists():
-                try:
-                    mask_img = plt.imread(water_mask_path)
-                    ax.imshow(mask_img, extent=(LON_MIN_DEFAULT, LON_MAX_DEFAULT, LAT_MIN_DEFAULT, LAT_MAX_DEFAULT), origin="lower", aspect="auto")
-                except Exception as e:
-                    print(f"Could not load water mask: {e}. Using plain background.")
-                    ax.set_facecolor('#aadaff') # Light blue for water
-            else:
-                print("No water mask found. Using plain background.")
-                ax.set_facecolor('#aadaff') # Light blue for water
+            mask_img = plt.imread(water_mask_path)
+            ax.imshow(
+                mask_img,
+                extent=(LON_MIN_DEFAULT, LON_MAX_DEFAULT, LAT_MIN_DEFAULT, LAT_MAX_DEFAULT),
+                origin="lower",
+                aspect="auto"
+            )
+        except Exception as exc:
+            print(f"Could not load water mask ({exc}). Using plain background.")
+            ax.set_facecolor('#aadaff')
+    else:
+        print("No water mask found. Using plain background.")
+        ax.set_facecolor('#aadaff')
 
 
 def visualize_predictions(final_dir: str, 
