@@ -56,7 +56,7 @@ python -m kalman_filter.baselines.visualize_kalman \
     --output_dir $OUTPUT_DIR \
     --water_mask $WATER_MASK \
     --window 64 \
-    --horizon 12
+    --horizon 36
 
 echo "End time: $(date)"
 echo "Visualizations saved to $OUTPUT_DIR"
