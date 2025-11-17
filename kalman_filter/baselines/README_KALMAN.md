@@ -13,6 +13,30 @@ The **Kalman Filter** is an optimal recursive state estimator for linear dynamic
 
 ## 🧮 Mathematical Foundation
 
+## 🏁 Final Evaluation Results
+
+The model was evaluated on the full pre-split dataset with a 3-hour prediction horizon (`horizon=36`). The key performance metrics, using Haversine distance, are summarized below.
+
+### Test Set Performance
+
+| Metric | Value (meters) | Notes |
+| :--- | :--- | :--- |
+| **ADE (3h)** | **7,308 m** | Average error over the full 3-hour prediction. |
+| **FDE @ 1h** | **3,295 m** | Final error after 1 hour (step 12). |
+| **FDE @ 2h** | **9,597 m** | Final error after 2 hours (step 24). |
+| **FDE @ 3h** | **17,946 m** | Final error after 3 hours (step 36). |
+
+### Validation Set Performance
+
+| Metric | Value (meters) |
+| :--- | :--- |
+| **ADE (3h)** | **7,602 m** |
+| **FDE @ 1h** | **3,431 m** |
+| **FDE @ 2h** | **9,984 m** |
+| **FDE @ 3h** | **18,654 m** |
+
+These results establish a robust, physics-based baseline for comparing against more complex deep learning models. The error grows quadratically, which is expected for a constant velocity model when vessels maneuver.
+
 ### State Space Model
 
 **State Vector** (4D):

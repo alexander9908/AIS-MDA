@@ -69,34 +69,54 @@ def plot_single_trajectory(ax, window, target, prediction, denorm=True):
     ax.grid(True, linestyle='--', alpha=0.4)
 
 
-def add_basemap(ax, water_mask_path: str | None = None):
-    """Adds a basemap to the plot, either from a water mask or contextily."""
+def add_basemap(ax, water_mask_path: str | None = None, bounds: tuple[float, float, float, float] | None = None):
+    """
+    Adds a basemap to the plot, either from a water mask or contextily.
+    If bounds are provided, zooms into that area.
+    """
     
-    # Define the geographic bounds for the Denmark region
-    LAT_MIN, LAT_MAX = 54.0, 59.0
-    LON_MIN, LON_MAX = 5.0, 17.0
-    
-    ax.set_xlim(LON_MIN, LON_MAX)
-    ax.set_ylim(LAT_MIN, LAT_MAX)
+    # Define the default geographic bounds for the Denmark region
+    LAT_MIN_DEFAULT, LAT_MAX_DEFAULT = 54.0, 59.0
+    LON_MIN_DEFAULT, LON_MAX_DEFAULT = 5.0, 17.0
+
+    if bounds:
+        lon_min, lon_max, lat_min, lat_max = bounds
+    else:
+        lon_min, lon_max, lat_min, lat_max = LON_MIN_DEFAULT, LON_MAX_DEFAULT, LAT_MIN_DEFAULT, LAT_MAX_DEFAULT
+
+    ax.set_xlim(lon_min, lon_max)
+    ax.set_ylim(lat_min, lat_max)
     ax.set_aspect('equal')
 
-    # Try to use contextily for a live map
+    # Try to use roaring-landmask for a high-quality, self-contained map
     try:
-        import contextily as ctx
-        print("Adding basemap with contextily...")
-        ctx.add_basemap(ax, crs='EPSG:4326', source=ctx.providers.OpenStreetMap.Mapnik, attribution_size=5)
+        from roaring_landmask import RoaringLandmask
+        print("Adding basemap with roaring-landmask...")
+        # Initialize the landmask (it's fast after the first time)
+        mask = RoaringLandmask.from_pbf()
+        # Plot the land
+        mask.plot_land(ax, facecolor='#c5e3ff', edgecolor='none')
+        # Set the background to a water color
+        ax.set_facecolor('#aadaff')
     except ImportError:
-        print("Contextily not found. Falling back to water mask.")
-        if water_mask_path and Path(water_mask_path).exists():
-            try:
-                mask = plt.imread(water_mask_path)
-                ax.imshow(mask, extent=(LON_MIN, LON_MAX, LAT_MIN, LAT_MAX), origin="lower", aspect="auto")
-            except Exception as e:
-                print(f"Could not load water mask: {e}. Using plain background.")
-                ax.set_facecolor('#c5e3ff') # Light blue for water
-        else:
-            print("No water mask found. Using plain background.")
-            ax.set_facecolor('#c5e3ff') # Light blue for water
+        print("roaring-landmask not found. Falling back to contextily or image mask.")
+        # Fallback to contextily if available
+        try:
+            import contextily as ctx
+            print("Adding basemap with contextily...")
+            ctx.add_basemap(ax, crs='EPSG:4326', source=ctx.providers.OpenStreetMap.Mapnik, attribution_size=5)
+        except ImportError:
+            print("Contextily not found. Falling back to water mask image.")
+            if water_mask_path and Path(water_mask_path).exists():
+                try:
+                    mask_img = plt.imread(water_mask_path)
+                    ax.imshow(mask_img, extent=(LON_MIN_DEFAULT, LON_MAX_DEFAULT, LAT_MIN_DEFAULT, LAT_MAX_DEFAULT), origin="lower", aspect="auto")
+                except Exception as e:
+                    print(f"Could not load water mask: {e}. Using plain background.")
+                    ax.set_facecolor('#aadaff') # Light blue for water
+            else:
+                print("No water mask found. Using plain background.")
+                ax.set_facecolor('#aadaff') # Light blue for water
 
 
 def visualize_predictions(final_dir: str, 
@@ -111,6 +131,7 @@ def visualize_predictions(final_dir: str,
     Args:
         final_dir: Directory with processed pickles
         output_dir: Directory to save the figures
+        water_mask_path: Path to a fallback water mask image
         window_size: Input window size
         horizon: Prediction horizon
         n_examples: Number of examples to plot
@@ -195,28 +216,48 @@ def visualize_predictions(final_dir: str,
 
     for ex, cat in zip(selected, categories):
         # Create a new figure for each plot
-        fig, ax = plt.subplots(figsize=(8, 8))
+        fig, ax = plt.subplots(figsize=(10, 10))
         
-        # Add basemap first
-        add_basemap(ax, water_mask_path)
+        # Denormalize all points to calculate bounds
+        window_deg = denormalize_positions(ex['window'][:, [LAT, LON]])
+        target_deg = denormalize_positions(ex['target'])
+        prediction_deg = denormalize_positions(ex['prediction'])
         
-        # Plot the trajectory
-        plot_single_trajectory(ax, ex['window'], ex['target'], ex['prediction'])
+        all_points = np.vstack([window_deg, target_deg, prediction_deg])
+        
+        # Calculate dynamic bounds with padding
+        lat_min, lon_min = all_points.min(axis=0)
+        lat_max, lon_max = all_points.max(axis=0)
+        
+        lat_pad = (lat_max - lat_min) * 0.2
+        lon_pad = (lon_max - lon_min) * 0.2
+        
+        bounds = (
+            lon_min - lon_pad,
+            lon_max + lon_pad,
+            lat_min - lat_pad,
+            lat_max + lat_pad
+        )
+
+        # Add basemap first with the dynamic bounds
+        add_basemap(ax, water_mask_path, bounds=bounds)
+        
+        # Plot the trajectory, passing denormalized data
+        plot_single_trajectory(ax, ex['window'], ex['target'], ex['prediction'], denorm=True)
         
         error_m = ex['error'] * 111000  # Rough conversion to meters (1° ≈ 111km)
-        ax.set_title(f"{cat.split('_')[0]} Case - MMSI {ex['mmsi']}\nADE: {ex['error']:.6f} ({error_m:.0f}m)",
+        ax.set_title(f"{cat.replace('_', ' ')} Case - MMSI {ex['mmsi']}\nADE: {ex['error']:.6f} ({error_m:.0f}m)",
                     fontsize=12)
         
-        fig.suptitle(f'Kalman Filter Trajectory Prediction\n'
-                     f'Window: {window_size} steps, Horizon: {horizon} steps',
-                     fontsize=14, fontweight='bold')
+        fig.suptitle(f'Kalman Filter Trajectory Prediction',
+                     fontsize=16, fontweight='bold')
         
         plt.tight_layout(rect=(0, 0.03, 1, 0.95))
 
-        # Save individual plot
+        # Save individual plot with higher quality
         output_path = Path(output_dir) / f"kalman_prediction_{cat.lower()}.png"
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        plt.savefig(output_path, dpi=150, bbox_inches='tight')
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
         print(f"  -> Saved {output_path}")
         plt.close(fig)
 
