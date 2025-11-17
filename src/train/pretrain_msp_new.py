@@ -4,7 +4,7 @@ import argparse, numpy as np, torch, torch.nn as nn
 from torch.utils.data import DataLoader
 from pathlib import Path
 from src.utils.datasets import AISDataset
-from ..models.tptrans_unsup_new import TPTransMSPNew
+from ..models.legacy.tptrans_unsup_new import TPTransMSPNew
 
 def make_mask(x, p=0.2):
     B,T,F = x.shape

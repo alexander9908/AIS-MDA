@@ -1,5 +1,5 @@
 from .kinematic import constant_velocity_predict
-from .rnn_seq2seq import GRUSeq2Seq
+from .legacy.rnn_seq2seq import GRUSeq2Seq
 from .tptrans import TPTrans
 from .kalman_filter import (
     KalmanFilter,
