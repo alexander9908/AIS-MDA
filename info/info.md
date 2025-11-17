@@ -1,5 +1,5 @@
-
-
+# blackhole
+/dtu/blackhole/10/178320/preprocessed_1/final
 # preprocessing 
 
 ## kilde: https://arxiv.org/pdf/2109.03958
