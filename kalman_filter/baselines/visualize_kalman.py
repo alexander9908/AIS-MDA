@@ -132,7 +132,10 @@ def visualize_predictions(final_dir: str,
     np.random.seed(42)
     examples = []
     
-    for path in np.random.choice(paths, min(len(paths), 50), replace=False):
+    # Ensure paths is a numpy array for np.random.choice
+    path_array = np.array(paths)
+    
+    for path in np.random.choice(path_array, min(len(path_array), 50), replace=False):
         try:
             with open(path, "rb") as f:
                 item = pickle.load(f)
@@ -172,47 +175,52 @@ def visualize_predictions(final_dir: str,
     examples.sort(key=lambda x: x['error'])
     
     selected = []
+    categories = []
     if len(examples) >= n_examples:
         # Best 2
         selected.extend(examples[:2])
+        categories.extend(['Best_1', 'Best_2'])
         # Median 2
         mid = len(examples) // 2
         selected.extend(examples[mid-1:mid+1])
+        categories.extend(['Median_1', 'Median_2'])
         # Worst 2
         selected.extend(examples[-2:])
+        categories.extend(['Worst_1', 'Worst_2'])
     else:
         selected = examples[:n_examples]
-    
-    # Create figure
-    fig = plt.figure(figsize=(15, 10))
-    gs = GridSpec(2, 3, figure=fig, hspace=0.3, wspace=0.3)
-    
-    categories = ['Best', 'Best', 'Median', 'Median', 'Worst', 'Worst']
-    
-    for i, (ex, cat) in enumerate(zip(selected, categories)):
-        row = i // 3
-        col = i % 3
-        ax = fig.add_subplot(gs[row, col])
+        categories = [f"Example_{i+1}" for i in range(len(selected))]
+
+    print(f"Generating {len(selected)} individual trajectory plots...")
+
+    for ex, cat in zip(selected, categories):
+        # Create a new figure for each plot
+        fig, ax = plt.subplots(figsize=(8, 8))
         
         # Add basemap first
         add_basemap(ax, water_mask_path)
         
+        # Plot the trajectory
         plot_single_trajectory(ax, ex['window'], ex['target'], ex['prediction'])
         
         error_m = ex['error'] * 111000  # Rough conversion to meters (1° ≈ 111km)
-        ax.set_title(f"{cat} Case - MMSI {ex['mmsi']}\nADE: {ex['error']:.6f} ({error_m:.0f}m)",
-                    fontsize=10)
-    
-    fig.suptitle(f'Kalman Filter Trajectory Predictions\n'
-                f'Window: {window_size} steps (5h20m), Horizon: {horizon} steps (1h)',
-                fontsize=14, fontweight='bold')
-    
-    # Save
-    output_path = Path(output_dir) / "kalman_predictions.png"
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    plt.savefig(output_path, dpi=150, bbox_inches='tight')
-    print(f"Visualization saved to {output_path}")
-    plt.close()
+        ax.set_title(f"{cat.split('_')[0]} Case - MMSI {ex['mmsi']}\nADE: {ex['error']:.6f} ({error_m:.0f}m)",
+                    fontsize=12)
+        
+        fig.suptitle(f'Kalman Filter Trajectory Prediction\n'
+                     f'Window: {window_size} steps, Horizon: {horizon} steps',
+                     fontsize=14, fontweight='bold')
+        
+        plt.tight_layout(rect=(0, 0.03, 1, 0.95))
+
+        # Save individual plot
+        output_path = Path(output_dir) / f"kalman_prediction_{cat.lower()}.png"
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        plt.savefig(output_path, dpi=150, bbox_inches='tight')
+        print(f"  -> Saved {output_path}")
+        plt.close(fig)
+
+    print("Individual trajectory plots saved.")
 
 
 def plot_error_distribution(final_dir: str,

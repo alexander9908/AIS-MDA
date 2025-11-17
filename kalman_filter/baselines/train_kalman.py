@@ -23,6 +23,18 @@ from kalman_filter.kalman_filter import TrajectoryKalmanFilter, KalmanFilterPara
 # from src.eval.metrics_traj import ade, fde # Using custom Haversine-based metrics now
 
 
+# Custom JSON encoder to handle numpy types
+class NumpyEncoder(json.JSONEncoder):
+    """Special json encoder for numpy types"""
+    def default(self, o):
+        if isinstance(o, np.integer):
+            return int(o)
+        elif isinstance(o, np.floating):
+            return float(o)
+        elif isinstance(o, np.ndarray):
+            return o.tolist()
+        return super(NumpyEncoder, self).default(o)
+
 # Column indices for MapReduce processed data
 LAT, LON, SOG, COG, HEADING, ROT, NAV_STT, TIMESTAMP, MMSI = list(range(9))
 
@@ -364,7 +376,7 @@ def main():
     metrics_file = metrics_dir / "kalman_filter.json"
     
     with open(metrics_file, "w") as f:
-        json.dump(results_dict, f, indent=2)
+        json.dump(results_dict, f, indent=2, cls=NumpyEncoder)
     
     print(f"\nResults saved to {metrics_file}")
     
@@ -382,12 +394,15 @@ def main():
         
         if len(X_test) > 0:
             f.write(f"Test Results:\n")
-            f.write(f"  ADE: {test_results['ade']:.6f}\n")
-            f.write(f"  FDE: {test_results['fde']:.6f}\n")
-            f.write(f"  Samples: {test_results['n_samples']}\n")
-    
-    print(f"Summary saved to {summary_file}")
+            f.write(f"  ADE: {float(test_results['ade_meters']):.6f}\n")
+            f.write(f"  FDE: {float(test_results['fde_meters']):.6f}\n")
+        
+        if len(X_val) > 0:
+            f.write(f"\nValidation Results:\n")
+            f.write(f"  ADE: {float(val_results['ade_meters']):.6f}\n")
+            f.write(f"  FDE: {float(val_results['fde_meters']):.6f}\n")
 
+    print(f"Summary saved to {summary_file}")
 
 if __name__ == "__main__":
     main()

@@ -1,103 +1,66 @@
 # Kalman Filter Baseline for AIS Trajectory Prediction
 
-This folder contains a complete Kalman Filter implementation serving as a classical baseline to compare against neural network models.
+This folder contains a complete Kalman Filter implementation serving as a classical baseline for trajectory forecasting. It is designed to be evaluated on a pre-split dataset and includes functionality for advanced, map-based visualizations.
 
 ---
 
-## 🔄 How It Works: Step-by-Step Execution Flow
+## 🚀 Core Functionality
 
-### 1. **Load Preprocessed Data**
-```python
-# Function: load_trajectories()
-# Location: kalman_filter/baselines/train_kalman.py
-```
-- **Input:** Directory with `*_processed.pkl` files (e.g., `/dtu/blackhole/10/178320/preprocessed_test/`)
-- **Process:** 
-  - Scans directory for all `.pkl` files ending in `_processed.pkl`
-  - Loads each file: `{'mmsi': int, 'traj': np.ndarray}`
-  - Validates trajectory shape: `(T, 9)` where T ≥ 20 timesteps
-  - Filters out short/invalid trajectories
-- **Output:** List of trajectory arrays, each shape `(T, 9)`
-- **Example:** 993 valid trajectories loaded from 1000 files
+- **Model**: A constant velocity Kalman Filter with a 4D state `[latitude, longitude, velocity_lat, velocity_lon]`.
+- **Evaluation**: Calculates Haversine-based Average Displacement Error (ADE) and Final Displacement Error (FDE) in meters. It is specifically configured to report FDE at 1-hour, 2-hour, and 3-hour horizons.
+- **Data Handling**: Works with pre-split `train/`, `val/`, and `test/` directories containing processed `.pkl` files. This ensures a fair, MMSI-aware comparison against other models.
+- **Visualization**: Generates high-quality plots of predicted vs. actual trajectories on a real map of Denmark. It uses `contextily` for live map tiles and falls back to a pre-generated land/sea mask created with `roaring-landmask`.
 
 ---
 
-### 2. **Split Data by Vessel (MMSI-Aware)**
-```python
-# Function: split_trajectories()
-# Location: kalman_filter/baselines/train_kalman.py
-```
-- **Input:** List of trajectories, `val_frac=0.15`, `test_frac=0.15`
-- **Process:**
-  - Shuffles trajectories randomly (seed=42 for reproducibility)
-  - Splits into three sets:
-    - Test: 15% of trajectories (148 trajectories)
-    - Validation: 15% of trajectories (148 trajectories)
-    - Train: 70% of trajectories (697 trajectories)
-  - **Critical:** Each vessel (MMSI) stays in only ONE split (no data leakage)
-- **Output:** `train_trajs`, `val_trajs`, `test_trajs`
+## 🛠️ Workflow & Scripts
+
+The workflow is managed by shell scripts designed for a DTU HPC environment using the LSF scheduler (`bsub`).
+
+### 1. Full Evaluation (`eval_kalman_full.sh`)
+
+This is the main script for running the final evaluation on the test set.
+
+- **What it does**:
+    1.  Sets up the Python environment.
+    2.  Runs `kalman_filter/baselines/train_kalman.py` on the full test dataset located at `/dtu/blackhole/10/178320/preprocessed_1/final/test`.
+    3.  Uses a prediction horizon of 3 hours (`--horizon 36`).
+    4.  The Python script evaluates the predictions and calculates Haversine ADE/FDE, saving the results to a JSON file in the `kalman_filter/` directory.
+
+- **How to run**:
+  ```bash
+  bsub < kalman_filter/eval_kalman_full.sh
+  ```
+
+### 2. Visualization (`visualize_kalman.sh`)
+
+This script generates the trajectory plots.
+
+- **What it does**:
+    1.  Sets up the Python environment.
+    2.  **Builds Water Mask**: Runs `kalman_filter/build_water_mask.py` to create a `water_mask.png` file using the `roaring-landmask` library. This provides a fallback map background and requires no manual downloads.
+    3.  **Generates Plots**: Runs `kalman_filter/baselines/visualize_kalman.py` to predict trajectories from the test set and plot them over a map background.
+    4.  Saves the output `.png` files to `kalman_filter/visualizations/`.
+
+- **How to run**:
+  ```bash
+  # First, ensure roaring-landmask is installed
+  # pip install roaring-landmask
+
+  # Then, submit the job
+  bsub < kalman_filter/visualize_kalman.sh
+  ```
 
 ---
 
-### 3. **Create Sliding Windows**
-```python
-# Function: create_windows()
-# Location: kalman_filter/baselines/train_kalman.py
-```
-- **Input:** Trajectories, `window=64`, `horizon=12`, `max_windows=999999`
-- **Process:**
-  - For each trajectory with T timesteps:
-    - Creates overlapping windows starting at each position
-    - Window format: `[start : start+64]` → predict `[start+64 : start+76]`
-    - Continues until not enough data for full window+horizon
-  - Extracts only lat/lon columns for targets (columns 0,1)
-  - Stops when reaching `max_windows` total across all trajectories
-- **Output:** 
-  - `X`: Input windows `(N, 64, 9)` - N windows, 64 timesteps, 9 features
-  - `Y`: Target positions `(N, 12, 2)` - N windows, 12 future steps, lat/lon
-- **Example:** From 148 test trajectories → 73,482 windows
+## ⚙️ Noise Parameters
 
----
+The filter uses fixed, untuned noise parameters defined in `kalman_filter/kalman_filter.py`:
 
-### 4. **Initialize Kalman Filter**
-```python
-# Class: TrajectoryKalmanFilter
-# Location: kalman_filter/kalman_filter.py
-```
-- **Input:** `KalmanFilterParams` with noise values
-- **Process:**
-  - Sets up state-space model:
-    - State vector: `[lat, lon, v_lat, v_lon]` (position + velocity)
-    - Measurement: `[lat, lon]` (only positions observed)
-    - Dynamics: Constant velocity model `x_{k+1} = F·x_k + noise`
-  - Initializes covariance matrices:
-    - `Q`: Process noise (uncertainty in motion model)
-    - `R`: Measurement noise (GPS/AIS sensor uncertainty)
-    - `P`: State covariance (uncertainty in estimates)
-- **Default Parameters:**
-  - `process_noise_pos = 1e-5`
-  - `process_noise_vel = 1e-4`
-  - `measurement_noise = 1e-4`
-  - `dt = 300.0` seconds (5-minute intervals)
+- **`R` (Measurement Noise)**: `1e-5` for latitude and longitude, representing sensor inaccuracy.
+- **`Q` (Process Noise)**: `1e-4` for position and velocity components, accounting for unmodeled dynamics like turns and speed changes.
 
----
-
-### 5. **Predict (For Each Window)**
-```python
-# Method: kf.predict()
-# Location: kalman_filter/kalman_filter.py
-```
-- **Input:** One window `(64, 9)` of historical positions
-- **Process:**
-  - **Filter Phase:** Process 64 historical observations
-    - For each timestep t in [0, 63]:
-      - **Prediction step:** `x̂ = F·x`, `P = F·P·F^T + Q`
-      - **Update step:** Incorporate measurement, update state estimate
-      - Uses Kalman gain to balance prediction vs measurement
-  - **Forecast Phase:** Project 12 steps into future
-    - Starting from final filtered state at t=63
-    - For each step h in [0, 11]:
-      - **Pure prediction:** `x̂ = F·x̂` (no new measurements)
+While tuning these parameters could improve performance, the current implementation serves as a consistent and reproducible baseline.
       - Extract position: `[lat, lon]`
 - **Output:** Predicted trajectory `(12, 2)` - 12 future positions
 
