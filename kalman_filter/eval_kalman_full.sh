@@ -49,7 +49,7 @@ python -m kalman_filter.baselines.train_kalman \
     --val_dir "${VAL_DIR}" \
     --test_dir "${TEST_DIR}" \
     --window 64 \
-    --horizon 12 \
+    --horizon 36 \
     --max_windows 999999
 
 echo "End time: $(date)"
