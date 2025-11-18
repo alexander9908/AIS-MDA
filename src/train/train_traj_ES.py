@@ -5,6 +5,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
+import os 
 
 from ..config import load_config
 from ..models import GRUSeq2Seq, TPTrans

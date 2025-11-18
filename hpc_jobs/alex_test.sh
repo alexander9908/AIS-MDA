@@ -51,4 +51,4 @@ module swap cuda/12.6.3
 
 # Run the TPTrans training with the full config
 # (make sure configs/traj_tptrans_full.yaml exists and is correct)
-python src/train/train_traj_ES.py --config_path configs/traj_tptrans_full.yaml
+python -m src.train.train_traj_ES --config configs/traj_tptrans_full.yaml
