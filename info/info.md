@@ -17,6 +17,8 @@
 - Long <
 - Lat < 
 
+ture er stapet med 5 min 
+
 
 ## Features in df
 Columns: LAT, LON, SOG, COG, HEADING, ROT, NAV_STT, TIMESTAMP, MMSI
