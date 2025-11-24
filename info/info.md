@@ -1,5 +1,5 @@
-
-
+# blackhole
+/dtu/blackhole/10/178320/preprocessed_1/final
 # preprocessing 
 
 ## kilde: https://arxiv.org/pdf/2109.03958
@@ -16,6 +16,8 @@
 ## max long, lat
 - Long <
 - Lat < 
+
+ture er stapet med 5 min 
 
 
 ## Features in df
