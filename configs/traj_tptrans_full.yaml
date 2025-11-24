@@ -11,6 +11,14 @@ out_dir: data/checkpoints/tp_trans_test/ #tptrans_full_h4_enc4_dec2/
 window: 64          # length of observed history
 horizon: 12         # prediction horizon
 
+start_mode: kmeans  # set to "kmeans" to enable centroid-based starting points
+kmeans:
+  n_clusters: 50
+  samples_per_traj: 200
+  max_points: 200000
+  n_init: 10
+  random_state: 42
+
 # Full feature list in the preprocessed pickle; the model will still only
 # use the first 4: [LAT, LON, SOG, COG].
 features: [LAT, LON, SOG, COG, HEADING, ROT, NAV_STT, TIMESTAMP, MMSI]
