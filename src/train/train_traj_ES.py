@@ -11,7 +11,8 @@ from ..config import load_config
 from ..models import GRUSeq2Seq, TPTrans
 from ..utils.datasets_V3 import make_ais_dataset
 from ..models.traisformer1 import TrAISformer, BinSpec
-
+from ..utils.logging import CustomLogger
+from torchinfo import summary
 
 def huber_loss(pred, target, delta: float = 1.0):
     return nn.SmoothL1Loss(beta=delta)(pred, target)
@@ -23,8 +24,14 @@ def main(cfg_path: str):
     pre_dir = cfg.get('processed_dir')  # e.g., "data/map_reduced/"
     out_dir = Path(cfg.get("out_dir", "data/checkpoints")); out_dir.mkdir(parents=True, exist_ok=True)
 
+    logger = CustomLogger(project_name="AIS-MDA", group=cfg.get("wandb_group", None), run_name=cfg.get("run_name", None))
+
     window = int(cfg.get("window", 64))
     horizon = int(cfg.get("horizon", 12))
+
+    logger.log_config(cfg)
+    logger.log_config({"window": window,
+                       "horizon": horizon})
 
     # --- DATASETS (train/val) ---
     # If TrAISformer -> output_features=4 (lat,lon,sog,cog). Else 2 (lat,lon)
@@ -34,6 +41,9 @@ def main(cfg_path: str):
 
     dl_train = DataLoader(ds_train, batch_size=int(cfg.get("batch_size", 128)), shuffle=True, num_workers=0, pin_memory=True)
     dl_val   = DataLoader(ds_val,   batch_size=int(cfg.get("batch_size", 128)), shuffle=False, num_workers=0, pin_memory=True)
+
+    logger.info(f"Training samples: {len(ds_train)}")
+    logger.info(f"Validation samples: {len(ds_val)}")
 
     feat_dim = 4  # we always pass [lat,lon,sog,cog] to encoders
 
@@ -72,6 +82,8 @@ def main(cfg_path: str):
         model_name = "traisformer"
     else:
         raise ValueError(f"Unknown model {name}")
+    
+    logger.info(f"Model summary:\n{summary(model, input_size=(1, window, feat_dim))}")
 
     ckpt_name = f"traj_{model_name}.pt"
     best_path = out_dir / ckpt_name
@@ -133,6 +145,7 @@ def main(cfg_path: str):
         val_loss = vtotal / len(ds_val)
         print(f"epoch {epoch}: train={train_loss:.4f}  val={val_loss:.4f}")
 
+        logger.log_metrics({"train_loss": train_loss, "val_loss": val_loss}, step=epoch)
         # check improvement and save best
         improved = val_loss < (best_val - min_delta)
 
@@ -152,7 +165,13 @@ def main(cfg_path: str):
             break
 
     print(f"Saved best to {best_path}")
-
+    logger.artifact(
+        artifact=best_path,
+        name=f"{model_name}_traj_model",
+        type="model",
+    )
+    logger.summary(f"Training completed. Best val loss: {best_val:.4f}")
+    logger.finish()
 
 
 if __name__ == "__main__":

@@ -30,3 +30,4 @@ wandb
 # Optional: Jupyter for interactive work
 notebook
 jupyterlab
+torchinfo
