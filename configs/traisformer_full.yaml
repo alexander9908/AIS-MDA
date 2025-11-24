@@ -1,8 +1,8 @@
 task: trajectory
 processed_dir: data/map_reduced/   # MUST end with slash
 out_dir: data/checkpoints
-window: 128
-horizon: 24
+window: 64
+horizon: 12
 start_mode: kmeans  # set to "kmeans" to enable centroid-based starting points
 kmeans:
   n_clusters: 64
@@ -14,8 +14,8 @@ kmeans:
 model:
   name: traisformer
   d_model: 512
-  nhead: 8
-  enc_layers: 8
+  nhead: 16
+  enc_layers: 12 # dec_layers: 12
   dropout: 0.1
 
 # TrAISformer loss auxiliaries
@@ -37,5 +37,8 @@ bins:
 loss: ce         # (ignored; TrAISformer uses CE internally)
 optimizer: adamw
 lr: 0.0003
-batch_size: 96
-epochs: 30
+batch_size: 512
+epochs: 100
+
+early_stop_patience: 15
+early_stop_min_delta: 1e-4
