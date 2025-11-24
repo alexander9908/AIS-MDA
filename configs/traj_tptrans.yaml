@@ -5,9 +5,9 @@ window: 64
 horizon: 12
 start_mode: kmeans  # set to "kmeans" to enable centroid-based starting points
 kmeans:
-  n_clusters: 32
-  samples_per_traj: 128
-  max_points: 200000
+  n_clusters: 64
+  samples_per_traj: 300
+  max_points: 250000
   n_init: 10
   random_state: 42
 features: [LAT, LON, SOG, COG, HEADING, ROT, NAV_STT, TIMESTAMP, MMSI]
