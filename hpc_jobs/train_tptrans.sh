@@ -18,7 +18,7 @@
 #BSUB -R "select[gpu80gb]"
 
 ### -- set walltime limit: hh:mm (max 24:00 for GPU queues) --
-#BSUB -W 8:00
+#BSUB -W 24:00
 
 ### -- request system memory (per job, not per core) --
 #BSUB -R "rusage[mem=8GB]"
