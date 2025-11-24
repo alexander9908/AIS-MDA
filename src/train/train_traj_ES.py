@@ -95,13 +95,11 @@ def main(cfg_path: str):
     if model_name == "traisformer":
         dummy_past = to_bins(torch.zeros((1, window, 4)))
         dummy_future = to_bins(torch.zeros((1, horizon, 4)))
-        logger.info(f"Model summary:\n{summary(
-            model, input_data=[dummy_past, dummy_future]
-        )}")
+        summ = summary(model, input_data=[dummy_past, dummy_future])
+        logger.info(f"Model summary:\n{summ}")
     else:
-        logger.info(f"Model summary:\n{summary(
-            model, input_size=(1, window, feat_dim)
-        )}")
+        summ = summary(model, input_size=(1, window, feat_dim))
+        logger.info(f"Model summary:\n{summ}")
 
     ckpt_name = f"traj_{model_name}.pt"
     best_path = out_dir / ckpt_name
