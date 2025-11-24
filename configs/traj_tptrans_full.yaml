@@ -5,7 +5,7 @@ task: trajectory
 processed_dir: data/map_reduced/ # /dtu/blackhole/10/178320/preprocessed_1/final/
 
 # Where to save the final/best checkpoint
-out_dir: data/checkpoints/tp_trans_test/ #tptrans_full_h4_enc4_dec2/
+out_dir: data/checkpoints/tp_trans_test/ #tptrans_full/
 
 # Sequence setup
 window: 64          # length of observed history

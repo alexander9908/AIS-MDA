@@ -1,6 +1,7 @@
 task: trajectory
-processed_dir: data/map_reduced/   # MUST end with slash
-out_dir: data/checkpoints
+
+processed_dir: data/map_reduced/ # /dtu/blackhole/10/178320/preprocessed_1/final/
+out_dir: data/checkpoints/traisformer_test/ #traisformer_full/
 window: 64
 horizon: 12
 start_mode: kmeans  # set to "kmeans" to enable centroid-based starting points
