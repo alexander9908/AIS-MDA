@@ -2,7 +2,7 @@ task: trajectory
 
 # CHANGE this to the directory with the 3-month preprocessed data.
 # It must contain "train", "val", (and optionally "test") subfolders.
-processed_dir: data/map_reduced/ #/dtu/blackhole/10/178320/preprocessed_1/final/
+processed_dir: /dtu/blackhole/10/178320/preprocessed_1/final/
 
 # Where to save the final/best checkpoint
 out_dir: data/checkpoints/tptrans/tptrans_full/
