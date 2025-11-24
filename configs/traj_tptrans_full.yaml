@@ -26,9 +26,9 @@ features: [LAT, LON, SOG, COG, HEADING, ROT, NAV_STT, TIMESTAMP, MMSI]
 model:
   name: tptrans
   d_model: 512      # latent dimension
-  nhead: 4 #8          # Transformer heads
-  enc_layers: 4 #8     # encoder depth
-  dec_layers: 2 #4     # GRU layers
+  nhead: 16 #4 #8          # Transformer heads
+  enc_layers: 12 #8     # encoder depth
+  dec_layers: 12 #4     # GRU layers
 
 # Training setup
 loss: huber
@@ -42,6 +42,6 @@ early_stop_patience: 15     # stop if 15 epochs pass without real improvement
 early_stop_min_delta: 1e-4 # require at least 1e-4 improvement in val loss
 
 
-# Extra stability knobs used in train_traj_V3.py:
+# Extra stability knobs used in train_traj_ES.py:
 huber_delta: 1.0    # SmoothL1 beta (default in code)
 clip_norm: 1.0      # gradient clipping max-norm (default in code)
