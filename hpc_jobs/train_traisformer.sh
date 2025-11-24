@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# TPTrans full 3-month training on DTU A100 80GB
+# Traisformer full 3-month training on DTU A100 80GB
 #
 
 ### LSF options --------------------------------------------------------------
