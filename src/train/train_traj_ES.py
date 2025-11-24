@@ -83,7 +83,25 @@ def main(cfg_path: str):
     else:
         raise ValueError(f"Unknown model {name}")
     
-    logger.info(f"Model summary:\n{summary(model, input_size=(1, window, feat_dim))}")
+    def to_bins(X):  # X shape: [B, T, 4]
+        lat, lon, sog, cog = X[...,0], X[...,1], X[...,2]*model.bins.sog_max, X[...,3]*360.0
+        return {
+            "lat": model.bins.lat_to_bin(lat),
+            "lon": model.bins.lon_to_bin(lon),
+            "sog": model.bins.sog_to_bin(sog),
+            "cog": model.bins.cog_to_bin(cog),
+        }
+    
+    if model_name == "traisformer":
+        dummy_past = to_bins(torch.zeros((1, window, 4)))
+        dummy_future = to_bins(torch.zeros((1, horizon, 4)))
+        logger.info(f"Model summary:\n{summary(
+            model, input_data=[dummy_past, dummy_future]
+        )}")
+    else:
+        logger.info(f"Model summary:\n{summary(
+            model, input_size=(1, window, feat_dim)
+        )}")
 
     ckpt_name = f"traj_{model_name}.pt"
     best_path = out_dir / ckpt_name
@@ -94,15 +112,6 @@ def main(cfg_path: str):
     scaler_amp = torch.cuda.amp.GradScaler(enabled=torch.cuda.is_available())
     epochs = int(cfg.get("epochs", 5)); clip_norm = float(cfg.get("clip_norm", 1.0))
     print(f"[train] model={model_name}, window={window}, horizon={horizon}, device={device}")
-
-    def to_bins(X):  # X shape: [B, T, 4]
-        lat, lon, sog, cog = X[...,0], X[...,1], X[...,2]*model.bins.sog_max, X[...,3]*360.0
-        return {
-            "lat": model.bins.lat_to_bin(lat),
-            "lon": model.bins.lon_to_bin(lon),
-            "sog": model.bins.sog_to_bin(sog),
-            "cog": model.bins.cog_to_bin(cog),
-        }
 
     best_val = float("inf")
     patience   = int(cfg.get("early_stop_patience", 0))
