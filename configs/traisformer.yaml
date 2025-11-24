@@ -3,6 +3,13 @@ processed_dir: data/map_reduced/   # MUST end with slash
 out_dir: data/checkpoints
 window: 128
 horizon: 24
+start_mode: kmeans
+kmeans:
+  n_clusters: 64
+  samples_per_traj: 256
+  max_points: 250000
+  n_init: 10
+  random_state: 42
 
 model:
   name: traisformer

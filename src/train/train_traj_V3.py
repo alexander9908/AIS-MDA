@@ -28,8 +28,14 @@ def main(cfg_path: str):
     # --- DATASETS (train/val) ---
     # If TrAISformer -> output_features=4 (lat,lon,sog,cog). Else 2 (lat,lon)
     out_feats = 4 if cfg["model"]["name"].lower() == "traisformer" else 2
-    ds_train = make_ais_dataset(pre_dir + "train", window=window, horizon=horizon, output_features=out_feats, filter_short=True)
-    ds_val   = make_ais_dataset(pre_dir + "val",   window=window, horizon=horizon, output_features=out_feats, filter_short=True)
+    start_mode = cfg.get("start_mode", "head")
+    kmeans_cfg = cfg.get("kmeans", None)
+    ds_train = make_ais_dataset(pre_dir + "train", window=window, horizon=horizon,
+                                output_features=out_feats, filter_short=True,
+                                start_mode=start_mode, kmeans_config=kmeans_cfg)
+    ds_val   = make_ais_dataset(pre_dir + "val",   window=window, horizon=horizon,
+                                output_features=out_feats, filter_short=True,
+                                start_mode=start_mode, kmeans_config=kmeans_cfg)
 
     dl_train = DataLoader(ds_train, batch_size=int(cfg.get("batch_size", 128)), shuffle=True, num_workers=0, pin_memory=True)
     dl_val   = DataLoader(ds_val,   batch_size=int(cfg.get("batch_size", 128)), shuffle=False, num_workers=0, pin_memory=True)
@@ -146,4 +152,3 @@ if __name__ == "__main__":
     ap.add_argument("--config", required=True)
     args = ap.parse_args()
     main(args.config)
-
