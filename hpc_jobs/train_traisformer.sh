@@ -8,7 +8,7 @@
 #BSUB -q gpua100
 
 ### -- set the job Name --
-#BSUB -J tptrans_full_3m
+#BSUB -J traisformer_full_3m
 
 ### -- ask for number of CPU cores (min 4 per GPU is recommended) --
 #BSUB -n 4
