@@ -145,3 +145,10 @@ class TrajectoryKalmanFilter:
     def predict(self, window: np.ndarray, horizon: int) -> np.ndarray:
         self.fit(window)
         return self.kf.forecast(horizon)
+
+    def predict_batch(self, windows: np.ndarray, horizon: int) -> np.ndarray:
+        """Predict a batch of windows; retained for compatibility."""
+        predictions = np.zeros((len(windows), horizon, 2), dtype=np.float32)
+        for idx, window in enumerate(windows):
+            predictions[idx] = self.predict(window, horizon)
+        return predictions
