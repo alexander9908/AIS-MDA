@@ -1,4 +1,3 @@
-# src/train/train_traj_ES_V2.py
 from __future__ import annotations
 import argparse
 from pathlib import Path
@@ -9,13 +8,13 @@ from torch.utils.data import DataLoader
 import os 
 import time
 import sys
+from multiprocessing import cpu_count
 
-# Adjust imports to match your project structure
+# Adjust these imports if your folder structure is different
 from ..config import load_config
 from ..models import TPTrans
 from ..utils.datasets_V3 import make_ais_dataset
 from ..utils.logging import CustomLogger
-from multiprocessing import cpu_count
 
 def main(cfg_path: str):
     cfg = load_config(cfg_path)
@@ -27,9 +26,17 @@ def main(cfg_path: str):
 
     window = int(cfg.get("window", 64))
     horizon = int(cfg.get("horizon", 12))
+    
+    # Scale factor to make small degree changes (0.001) look like healthy NN targets (0.1)
+    SCALE_FACTOR = 100.0
 
     logger.log_config(cfg)
-    logger.log_config({"window": window, "horizon": horizon, "mode": "delta_training"})
+    logger.log_config({
+        "window": window, 
+        "horizon": horizon, 
+        "mode": "delta_training_scaled",
+        "scale_factor": SCALE_FACTOR
+    })
 
     # --- DATASETS ---
     # TPTrans uses 4 features input [lat,lon,sog,cog], predicts 2 features [dlat, dlon]
@@ -56,7 +63,6 @@ def main(cfg_path: str):
 
     # --- WINDOWS MULTIPROCESSING FIX ---
     # Windows cannot pickle nested functions used in datasets_V3. 
-    # Setting num_workers=0 runs on the main process (slower but works).
     if os.name == 'nt':
         print("[System] Detected Windows. Setting num_workers=0 to avoid pickling errors.")
         n_workers = 0
@@ -107,7 +113,7 @@ def main(cfg_path: str):
     epochs = int(cfg.get("epochs", 5))
     clip_norm = float(cfg.get("clip_norm", 1.0))
     
-    print(f"[Train] Model={model_name} (Delta Mode), Device={device}")
+    print(f"[Train] Model={model_name} (Delta Mode), Device={device}, Scale={SCALE_FACTOR}")
     
     warmup_epochs = int(cfg.get("warmup_epochs", max(1, int(epochs//40))))
     best_val = float("inf")
@@ -137,15 +143,16 @@ def main(cfg_path: str):
                 pred_deltas = model(xb) # [B, H, 2]
 
                 # 2. Compute Target Deltas (y_t - y_{t-1})
-                # We need the last past point to calculate the first delta
                 last_past = xb[:, -1, :2] # [B, 2]
                 future_pos = yb[:, :, :2] # [B, H, 2]
                 
-                # Concatenate [last_past, future_pos] -> [B, H+1, 2]
                 full_seq = torch.cat([last_past.unsqueeze(1), future_pos], dim=1)
                 
-                # Target is diff between adjacent steps
-                target_deltas = full_seq[:, 1:] - full_seq[:, :-1] # [B, H, 2]
+                # Raw diff (very small numbers like 0.001)
+                raw_target_deltas = full_seq[:, 1:] - full_seq[:, :-1]
+                
+                # Scale up! (0.001 -> 0.1)
+                target_deltas = raw_target_deltas * SCALE_FACTOR
 
                 loss = criterion(pred_deltas, target_deltas)
 
@@ -172,7 +179,9 @@ def main(cfg_path: str):
                 last_past = xb[:, -1, :2]
                 future_pos = yb[:, :, :2]
                 full_seq = torch.cat([last_past.unsqueeze(1), future_pos], dim=1)
-                target_deltas = full_seq[:, 1:] - full_seq[:, :-1]
+                
+                raw_target_deltas = full_seq[:, 1:] - full_seq[:, :-1]
+                target_deltas = raw_target_deltas * SCALE_FACTOR
 
                 vloss = criterion(pred_deltas, target_deltas)
                 vtotal += vloss.item() * xb.size(0)
@@ -196,12 +205,17 @@ def main(cfg_path: str):
         # Check improvement
         if val_loss < best_val:
             best_val = val_loss
-            torch.save(model.state_dict(), best_path)
+            # Save SCALE_FACTOR in the checkpoint if you want to load it automatically later
+            state = {
+                "state_dict": model.state_dict(),
+                "scale_factor": SCALE_FACTOR,
+                "model_type": "delta_tptrans"
+            }
+            torch.save(state, best_path)
 
     print(f"Saved best model to {best_path}")
     
     # --- EXPLICIT SUMMARY LOGGING ---
-    # This ensures these values appear in the "Summary" columns of the WandB table
     logger.log_summary({
         'best_val_loss': best_val,
         'final_train_loss': final_train_loss,

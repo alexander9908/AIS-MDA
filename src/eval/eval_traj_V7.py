@@ -52,6 +52,7 @@ def evaluate_and_plot_trip(
         with torch.no_grad():
             # Output is [1, Horizon, 2] (DeltaLat_Norm, DeltaLon_Norm)
             deltas_pred = model(X_tensor)[0].cpu().numpy() 
+            deltas_pred = deltas_pred / 100.0
 
         # ---- INTEGRATE AND PROJECT ----
         pred_lat_list = []
