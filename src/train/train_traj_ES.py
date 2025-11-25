@@ -305,7 +305,7 @@ def main(cfg_path: str):
         name=f"{model_name}_traj_model",
         type="model",
     )
-    logger.log_summary(f"Training completed. Best val loss: {best_val:.4f}")
+    logger.log_summary({'best_val_loss': best_val})
     logger.finish()
 
 
