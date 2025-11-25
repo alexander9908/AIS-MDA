@@ -2,6 +2,7 @@
 import os, pickle, numpy as np, torch
 from torch.utils.data import Dataset
 from sklearn.cluster import KMeans
+from collections import defaultdict
 
 
 def pipeline_adapter(window=64, horizon=12, output_features=2, filter_short=True):
@@ -16,19 +17,32 @@ def pipeline_adapter(window=64, horizon=12, output_features=2, filter_short=True
                 self._horizon = horizon
                 self._output_features = output_features
                 self._valid_indices = []
+                
+                # We iterate over the BASE dataset length (which might be exploded by epoch_samples)
+                # and filter out indices that map to files that are too short.
+                base_len = super().__len__()
                 if filter_short:
-                    for i in range(super().__len__()):
+                    # Optimization: if we know the base logic, we can skip checking every single exploded index
+                    # if the underlying file is short. But for safety/generality, we check all.
+                    # Since this happens once at init, it's acceptable.
+                    for i in range(base_len):
                         if super().original_length(i) >= required:
                             self._valid_indices.append(i)
                 else:
-                    self._valid_indices = list(range(super().__len__()))
+                    self._valid_indices = list(range(base_len))
+
             def __len__(self): return len(self._valid_indices)
+            
             def __getitem__(self, idx):
                 orig_idx = self._valid_indices[idx]
+                # super().__getitem__ now returns a random window from the file corresponding to orig_idx
                 seq, mask, seqlen, mmsi, time_start = super().__getitem__(orig_idx)
-                X = seq[:self._window]                                 # (window, 4)  [lat,lon,sog,cog]
+                
+                # Slicing logic remains the same
+                X = seq[:self._window]                                 # (window, 4)
                 Y = seq[self._window:self._window+self._horizon, :self._output_features]
                 return X, Y
+            
             def get_original_item(self, idx):
                 orig_idx = self._valid_indices[idx]
                 return super().__getitem__(orig_idx)
@@ -37,12 +51,14 @@ def pipeline_adapter(window=64, horizon=12, output_features=2, filter_short=True
     return decorator
 
 class AISDatasetBase(Dataset):
-    """Loads <MMSI>_<id>_processed.pkl with dict['traj'] columns:
-       [LAT, LON, SOG, COG, HEADING, ROT, NAV_STT, TIMESTAMP, MMSI] (normalized lat/lon/sog/cog ok)
-       Returns (seq, mask, seqlen, mmsi, time_start) where seq = (max_seqlen, 4) = [lat,lon,sog,cog].
+    """
+    Loads <MMSI>_<id>_processed.pkl.
+    Supports 'epoch_samples' to oversample files within one epoch.
+    Precomputes valid start indices and KMeans clusters to avoid runtime overhead.
     """
     def __init__(self, data_dir, max_seqlen=96, file_extension=".pkl",
-                 min_required_len=None, start_mode="head", kmeans_config=None):
+                 min_required_len=None, start_mode="head", kmeans_config=None,
+                 epoch_samples=1):
         self.data_dir = data_dir
         self.max_seqlen = max_seqlen
         self.min_required_len = min_required_len or max_seqlen
@@ -50,58 +66,137 @@ class AISDatasetBase(Dataset):
         self.file_list.sort()
         self.start_mode = (start_mode or "head").lower()
         self.kmeans_config = kmeans_config or {}
+        self.epoch_samples = epoch_samples  # Multiplier for dataset length
+        
         self._lengths = []
         self._centroids = None
+        self._kmeans_model = None
+        self.file_meta = [] # Stores {starts: [], clusters: {label: [indices]}} per file
+        
+        # RNGs
         self._kmeans_rng = np.random.default_rng(self.kmeans_config.get("random_state"))
         self._start_rng = np.random.default_rng(self.kmeans_config.get("random_state"))
+        
         self._prepare_metadata()
-    def __len__(self): return len(self.file_list)
+
+    def __len__(self): 
+        # Virtual length: number of files * samples per file per epoch
+        return len(self.file_list) * self.epoch_samples
+
     def _load_file(self, path):
         with open(path, 'rb') as f: return pickle.load(f)
+
     def original_length(self, idx):
-        return self._lengths[idx]
+        # Map virtual index back to file index
+        file_idx = idx // self.epoch_samples
+        return self._lengths[file_idx]
+
     def _prepare_metadata(self):
-        """Scan trajectories once for lengths and optional KMeans fitting."""
+        """
+        Scan trajectories once.
+        1. Fit KMeans (if needed).
+        2. For each file, find all valid start indices.
+        3. If KMeans, assign cluster labels to those start indices for fast lookup.
+        """
+        print(f"[AISDataset] Scanning {len(self.file_list)} files. Mode={self.start_mode}, Oversample={self.epoch_samples}x")
+        
         coords_samples = []
-        samples_per_traj = int(self.kmeans_config.get("samples_per_traj", 128))
-        max_points = int(self.kmeans_config.get("max_points", 200000))
+        samples_per_traj_fit = int(self.kmeans_config.get("samples_per_traj", 128))
+        max_points_fit = int(self.kmeans_config.get("max_points", 200000))
+        
+        # Pass 1: Load lengths and collect samples for KMeans fitting
+        temp_trajs = [] # Cache trajs temporarily to avoid double loading
+        
         for fname in self.file_list:
             path = os.path.join(self.data_dir, fname)
             V = self._load_file(path)
             traj = V["traj"]
             self._lengths.append(len(traj))
+            temp_trajs.append(traj) # Keep in RAM for Pass 2 (careful with memory on huge datasets)
+
             if self.start_mode == "kmeans":
                 lat_lon = traj[:, :2]
-                if samples_per_traj > 0 and len(lat_lon) > samples_per_traj:
-                    idx = self._kmeans_rng.choice(len(lat_lon), size=samples_per_traj, replace=False)
+                if samples_per_traj_fit > 0 and len(lat_lon) > samples_per_traj_fit:
+                    idx = self._kmeans_rng.choice(len(lat_lon), size=samples_per_traj_fit, replace=False)
                     sample = lat_lon[idx]
                 else:
                     sample = lat_lon
                 coords_samples.append(sample.astype(np.float64, copy=False))
+
+        # Fit KMeans
         if self.start_mode == "kmeans" and coords_samples:
             coords = np.concatenate(coords_samples, axis=0)
-            if max_points > 0 and len(coords) > max_points:
-                idx = self._kmeans_rng.choice(len(coords), size=max_points, replace=False)
+            if max_points_fit > 0 and len(coords) > max_points_fit:
+                idx = self._kmeans_rng.choice(len(coords), size=max_points_fit, replace=False)
                 coords = coords[idx]
+            
             n_clusters = int(self.kmeans_config.get("n_clusters", 32))
             n_init = int(self.kmeans_config.get("n_init", 10))
-            random_state = self.kmeans_config.get("random_state", None)
+            random_state = self.kmeans_config.get("random_state", 42)
+            
+            print(f"[AISDataset] Fitting KMeans({n_clusters}) on {len(coords)} points...")
             self._kmeans_model = KMeans(n_clusters=n_clusters, n_init=n_init, random_state=random_state)
             self._kmeans_model.fit(coords)
             self._centroids = self._kmeans_model.cluster_centers_
+
+        # Pass 2: Build lookup tables for each file
+        print("[AISDataset] Building start-index lookup tables...")
+        for i, traj in enumerate(temp_trajs):
+            total_len = len(traj)
+            # Valid start indices are those where a full sequence fits
+            # We need traj[start : start + max_seqlen] to be valid? 
+            # Actually, the adapter slices [0:window+horizon]. 
+            # So we need at least min_required_len.
+            
+            max_start = max(0, total_len - self.min_required_len)
+            # We can start anywhere from 0 to max_start (inclusive)
+            valid_starts = np.arange(max_start + 1, dtype=np.int32)
+            
+            meta = {'starts': valid_starts}
+            
+            if self.start_mode == "kmeans" and self._kmeans_model is not None and len(valid_starts) > 0:
+                # Predict clusters for the LOCATIONS at these start indices
+                # (Using the first point of the window to determine cluster)
+                start_coords = traj[valid_starts, :2]
+                labels = self._kmeans_model.predict(start_coords)
+                
+                # Group starts by cluster for O(1) sampling
+                cluster_map = defaultdict(list)
+                for start_idx, label in zip(valid_starts, labels):
+                    cluster_map[label].append(start_idx)
+                
+                # Convert to numpy arrays for efficiency
+                meta['clusters'] = {k: np.array(v) for k, v in cluster_map.items()}
+                meta['cluster_keys'] = np.array(list(meta['clusters'].keys()))
+            
+            self.file_meta.append(meta)
+        
+        del temp_trajs # Free memory
+        print("[AISDataset] Metadata ready.")
+
     def __getitem__(self, idx):
-        path = os.path.join(self.data_dir, self.file_list[idx])
+        # Map virtual index to file
+        file_idx = idx // self.epoch_samples
+        
+        path = os.path.join(self.data_dir, self.file_list[file_idx])
         V = self._load_file(path)
-        traj = V["traj"]  # np.ndarray
-        start_idx = self._pick_start_index(traj)
+        traj = V["traj"]
+        
+        # Pick start index using precomputed metadata
+        start_idx = self._pick_start_index_fast(file_idx)
+        
         end_idx = min(len(traj), start_idx + self.max_seqlen)
-        slice_traj = traj[start_idx:end_idx, :4]  # [lat,lon,sog,cog]
+        slice_traj = traj[start_idx:end_idx, :4]
         slice_traj[slice_traj > 0.9999] = 0.9999
+        
         seqlen = len(slice_traj)
         seq = np.zeros((self.max_seqlen, 4), dtype=np.float32)
         seq[:seqlen] = slice_traj
         mask = np.zeros((self.max_seqlen,), dtype=np.float32); mask[:seqlen] = 1.0
-        mmsi = int(V["mmsi"]); time_start = int(traj[start_idx, 7])
+        
+        mmsi = int(V["mmsi"])
+        time_start = int(traj[start_idx, 7])
+        
         return (
             torch.tensor(seq),
             torch.tensor(mask),
@@ -109,34 +204,43 @@ class AISDatasetBase(Dataset):
             torch.tensor(mmsi),
             torch.tensor(time_start),
         )
-    def _pick_start_index(self, traj):
-        total_len = len(traj)
-        required = min(self.min_required_len, total_len)
-        max_start = max(0, total_len - required)
-        if self.start_mode != "kmeans" or self._centroids is None or max_start == 0 or self._kmeans_model is None:
-            return 0
-        coords = traj[:, :2]
-        # Restrict to clusters the voyage actually visits
-        labels = self._kmeans_model.predict(coords)
-        unique_labels = np.unique(labels)
-        if len(unique_labels) == 0:
-            return 0
-        centroid_idx = int(self._start_rng.choice(unique_labels))
-        target = self._centroids[centroid_idx]
-        dists = np.linalg.norm(coords - target, axis=1)
-        order = np.argsort(dists)
-        for idx in order:
-            if idx <= max_start:
-                return int(idx)
-        return int(max_start)
 
-# Backward-compatible default (64/12 and 2 output feat = lat/lon)
+    def _pick_start_index_fast(self, file_idx):
+        meta = self.file_meta[file_idx]
+        starts = meta['starts']
+        
+        if len(starts) == 0:
+            return 0
+            
+        if self.start_mode == "kmeans" and 'clusters' in meta:
+            # 1. Pick a random cluster present in this trajectory
+            keys = meta['cluster_keys']
+            if len(keys) > 0:
+                chosen_cluster = self._start_rng.choice(keys)
+                # 2. Pick a random start index belonging to that cluster
+                candidates = meta['clusters'][chosen_cluster]
+                return int(self._start_rng.choice(candidates))
+        
+        # Fallback or "head" mode: uniform random sampling from valid starts
+        # (Original "head" mode usually meant index 0, but for oversampling we want diversity)
+        if self.start_mode == "head" and self.epoch_samples == 1:
+             return 0 # Strict head behavior for single-sample
+        
+        # Uniform sampling for oversampling or fallback
+        # This covers start_mode="uniform" as well as fallbacks from other modes
+        return int(self._start_rng.choice(starts))
+
+
+# Backward-compatible default
 AISDataset = pipeline_adapter(window=64, horizon=12, output_features=2)(AISDatasetBase)
 
-# Factory so train/eval can pick window/horizon/output_features at runtime
 def make_ais_dataset(data_dir, window, horizon, output_features=2,
                      filter_short=True, max_seqlen=None,
-                     start_mode="head", kmeans_config=None):
+                     start_mode="head", kmeans_config=None, epoch_samples=20):
+    """
+    epoch_samples: How many times to sample each file per epoch. 
+                   Higher = more data coverage per epoch.
+    """
     Adapted = pipeline_adapter(window=window, horizon=horizon,
                                output_features=output_features,
                                filter_short=filter_short)(AISDatasetBase)
@@ -145,4 +249,5 @@ def make_ais_dataset(data_dir, window, horizon, output_features=2,
         max_seqlen=(max_seqlen or (window + horizon)),
         start_mode=start_mode,
         kmeans_config=kmeans_config,
+        epoch_samples=epoch_samples,
     )

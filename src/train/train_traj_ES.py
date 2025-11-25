@@ -36,15 +36,58 @@ def main(cfg_path: str):
     # --- DATASETS (train/val) ---
     # If TrAISformer -> output_features=4 (lat,lon,sog,cog). Else 2 (lat,lon)
     out_feats = 4 if cfg["model"]["name"].lower() == "traisformer" else 2
-    ds_train = make_ais_dataset(pre_dir + "train", window=window, horizon=horizon, output_features=out_feats, filter_short=True)
-    ds_val   = make_ais_dataset(pre_dir + "val",   window=window, horizon=horizon, output_features=out_feats, filter_short=True)
+    start_mode = cfg.get("start_mode", "head") # head or kmeans
+    kmeans_cfg = cfg.get("kmeans_cfg", None)
+    epoch_samples = int(cfg.get("epoch_samples", 20)) # Samples per full trajectory per epoch
+    val_epoch_samples = max(2, epoch_samples // 4)
+    ds_train = make_ais_dataset(pre_dir + "train",
+                                window=window, horizon=horizon,
+                                output_features=out_feats,
+                                filter_short=True,
+                                start_mode=start_mode,
+                                kmeans_cfg=kmeans_cfg,
+                                epoch_samples=epoch_samples)
+    ds_val = make_ais_dataset(pre_dir + "val",
+                              window=window, horizon=horizon,
+                              output_features=out_feats,
+                              filter_short=True,
+                              start_mode="uniform", # For robust validation, taking the test task into account
+                              epoch_samples=max(2, epoch_samples // 4) # Use less samples for validation
+                              )
 
     dl_train = DataLoader(ds_train, batch_size=int(cfg.get("batch_size", 128)), shuffle=True, num_workers=0, pin_memory=True)
     dl_val   = DataLoader(ds_val,   batch_size=int(cfg.get("batch_size", 128)), shuffle=False, num_workers=0, pin_memory=True)
 
-    logger.info(f"Training samples: {len(ds_train)}")
-    logger.info(f"Validation samples: {len(ds_val)}")
-
+    ## Dataset statistics
+    logger.info(f"--- Dataset Statistics ---")
+    logger.info("- Train Set:")
+    logger.info(f"Total Files: {len(ds_train.file_list)}")
+    logger.info(f"Epoch Samples Multiplier: {ds_train.epoch_samples}")
+    logger.info(f"Virtual Epoch Size: {len(ds_train)}")
+    
+    # Report dropped samples due to short trajectories
+    theoretical_max = len(ds_train.file_list) * ds_train.epoch_samples
+    dropped_samples = theoretical_max - len(ds_train)
+    if dropped_samples > 0:
+        logger.info(f"Dropped Virtual Samples (Short Trajectories): {dropped_samples} ({dropped_samples/theoretical_max:.1%})")
+    
+    # KMeans Stats
+    if start_mode == "kmeans" and ds_train._kmeans_model is not None:
+        n_clusters = ds_train._kmeans_model.n_clusters
+        logger.info(f"KMeans Enabled: {n_clusters} clusters")
+        
+        # Count how many files actually have valid clusters
+        files_with_clusters = sum(1 for meta in ds_train.file_meta if 'clusters' in meta and len(meta['clusters']) > 0)
+        logger.info(f"Files with valid cluster regions: {files_with_clusters}/{len(ds_train.file_list)}")
+    else:
+        logger.info(f"Sampling Mode: {start_mode} (No KMeans)")
+        
+    logger.info("- Validation Set:")
+    logger.info(f"Total Files: {len(ds_val.file_list)}")
+    logger.info(f"Virtual Epoch Size: {len(ds_val)}")
+    
+    logger.info("------------------------------------")
+    
     feat_dim = 4  # we always pass [lat,lon,sog,cog] to encoders
 
     # --- MODEL ---
