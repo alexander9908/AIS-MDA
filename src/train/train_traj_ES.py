@@ -37,15 +37,14 @@ def main(cfg_path: str):
     # If TrAISformer -> output_features=4 (lat,lon,sog,cog). Else 2 (lat,lon)
     out_feats = 4 if cfg["model"]["name"].lower() == "traisformer" else 2
     start_mode = cfg.get("start_mode", "head") # head or kmeans
-    kmeans_cfg = cfg.get("kmeans_cfg", None)
+    kmeans_cfg = cfg.get("kmeans", None)
     epoch_samples = int(cfg.get("epoch_samples", 20)) # Samples per full trajectory per epoch
-    val_epoch_samples = max(2, epoch_samples // 4)
     ds_train = make_ais_dataset(pre_dir + "train",
                                 window=window, horizon=horizon,
                                 output_features=out_feats,
                                 filter_short=True,
                                 start_mode=start_mode,
-                                kmeans_cfg=kmeans_cfg,
+                                kmeans_config=kmeans_cfg,
                                 epoch_samples=epoch_samples)
     ds_val = make_ais_dataset(pre_dir + "val",
                               window=window, horizon=horizon,
@@ -220,7 +219,7 @@ def main(cfg_path: str):
         name=f"{model_name}_traj_model",
         type="model",
     )
-    logger.summary(f"Training completed. Best val loss: {best_val:.4f}")
+    logger.log_summary(f"Training completed. Best val loss: {best_val:.4f}")
     logger.finish()
 
 

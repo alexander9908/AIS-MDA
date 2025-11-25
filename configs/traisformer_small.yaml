@@ -1,6 +1,6 @@
 task: trajectory
 
-processed_dir: /dtu/blackhole/10/178320/preprocessed_1/final/
+processed_dir: /dtu/blackhole/10/178320/preprocessed_2/final/
 out_dir: data/checkpoints/traisformer/traisformer_small/
 window: 64
 horizon: 12
@@ -39,9 +39,9 @@ loss: ce         # (ignored; TrAISformer uses CE internally)
 optimizer: adamw
 lr: 0.0003
 batch_size: 512
-epochs: 100
+epochs: 2000
 
-early_stop_patience: 15
+early_stop_patience: 100
 early_stop_min_delta: 1e-4
 
 

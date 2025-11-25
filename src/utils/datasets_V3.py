@@ -3,6 +3,8 @@ import os, pickle, numpy as np, torch
 from torch.utils.data import Dataset
 from sklearn.cluster import KMeans
 from collections import defaultdict
+import joblib
+from pickle import UnpicklingError
 
 
 def pipeline_adapter(window=64, horizon=12, output_features=2, filter_short=True):
@@ -60,6 +62,7 @@ class AISDatasetBase(Dataset):
                  min_required_len=None, start_mode="head", kmeans_config=None,
                  epoch_samples=1):
         self.data_dir = data_dir
+        self.joblib_used = False # Weather pickle or joblib is used to save files, affects loading
         self.max_seqlen = max_seqlen
         self.min_required_len = min_required_len or max_seqlen
         self.file_list = [f for f in os.listdir(data_dir) if f.endswith(file_extension)]
@@ -84,7 +87,14 @@ class AISDatasetBase(Dataset):
         return len(self.file_list) * self.epoch_samples
 
     def _load_file(self, path):
-        with open(path, 'rb') as f: return pickle.load(f)
+        if self.joblib_used:
+            return joblib.load(path)
+        else:
+            try:
+                with open(path, 'rb') as f: return pickle.load(f)
+            except UnpicklingError:
+                self.joblib_used = True
+                return joblib.load(path)
 
     def original_length(self, idx):
         # Map virtual index back to file index
