@@ -41,7 +41,7 @@ epochs: 500                # allow enough room to converge
 epoch_samples: 4
 
 early_stop_patience: 50     # stop if 15 epochs pass without real improvement
-early_stop_min_delta: 1e-4 # require at least 1e-4 improvement in val loss
+early_stop_min_delta: 1e-3 # require at least 1e-3 improvement in val loss
 
 
 # Extra stability knobs used in train_traj_ES.py:
