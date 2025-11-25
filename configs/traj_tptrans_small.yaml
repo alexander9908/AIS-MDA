@@ -37,8 +37,10 @@ optimizer: adamw
 # These are what your training script reads:
 lr: 0.0003          # AdamW learning rate
 batch_size: 512 #128     # was 96; 128 is safe on an A100 80GB
-epochs: 100                # allow enough room to converge
-early_stop_patience: 15     # stop if 15 epochs pass without real improvement
+epochs: 500                # allow enough room to converge
+epoch_samples: 4
+
+early_stop_patience: 50     # stop if 15 epochs pass without real improvement
 early_stop_min_delta: 1e-4 # require at least 1e-4 improvement in val loss
 
 
