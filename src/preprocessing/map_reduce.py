@@ -1,204 +1,189 @@
-import numpy as np
 import os
-import pickle
-import shutil
-from tqdm import tqdm
-import argparse
+from time import time
+import joblib
 from multiprocessing import Pool, cpu_count
-from src.preprocessing.preprocessing import process_single_mmsi_track
+import numpy as np
+from argparse import ArgumentParser
+from collections import defaultdict
+import gc
 
-# Define the columns for our toy data for clarity
-# Original: LAT, LON, SOG, COG, HEADING, ROT, NAV_STT, TIMESTAMP, MMSI
-# Toy:      TIMESTAMP, LAT, LON, SOG
-LAT, LON, SOG, COG, HEADING, ROT, NAV_STT, TIMESTAMP, MMSI  = list(range(9))
+from src.preprocessing.preprocessing import preprocess_mmsi_track
+from src.utils.logging import CustomLogger
 
-def cleanup(force=False):
-    """Removes all the directories and files created by the script."""
-    print("--- Cleaning Up ---")
-    for d in [TEMP_DIR, FINAL_DIR]:
-        if os.path.exists(d):
-            if force:
-                shutil.rmtree(d)
-                print(f"Removed {d}")
-            else:
-                raise Exception(f"Directory {d} already exists. Use --cleanup to remove it.")
-    print("-------------------------\n")
+def map_and_shuffle(input_dir: str, temp_dir: str, logger: CustomLogger):
+    """ Goes through all input files and re-sorts them by MMSI into a temporary directory. """
+    
+    # Input files from chunking step
+    input_files = [os.path.join(input_dir, f) for f in os.listdir(input_dir) if f.endswith(".pkl")]
+    
+    logger.info(f"Starting map and shuffle phase on {len(input_files)} files...")
 
-def stage_1_map_and_shuffle():
-    """
-    Goes through all input files and re-sorts them by MMSI
-    into a temporary directory.
-    
-    INPUT:
-    - toy_input_data/file1.pkl
-    - toy_input_data/file2.pkl
-    
-    OUTPUT:
-    - temp_mmsi_groups/001/file1.pkl
-    - temp_mmsi_groups/002/file1.pkl
-    - temp_mmsi_groups/002/file2.pkl
-    - temp_mmsi_groups/003/file2.pkl
-    - ...
-    """
-    print("--- Stage 1: Map & Shuffle (Grouping by MMSI) ---")
-    
-    # Clean slate for the temporary shuffle directory
-    if os.path.exists(TEMP_DIR):
-        shutil.rmtree(TEMP_DIR)
-    os.makedirs(TEMP_DIR, exist_ok=True)
-    
-    input_files = [os.path.join(INPUT_DIR, f) for f in os.listdir(INPUT_DIR) if f.endswith(".pkl")]
-
-    for file_path in tqdm(input_files, desc="Processing input files"):
-        print(f"  Mapping {file_path}...")
-        with open(file_path, "rb") as f:
-            data_dict = pickle.load(f)
+    for file_path in input_files:
+        data_dict = joblib.load(file_path)
             
-            # If IS_TEST sample 1% of MMSIs
-            if IS_TEST:
-                sampled_mmsis = np.random.choice(list(data_dict.keys()), size=max(1, len(data_dict)//100), replace=False)
-                data_dict = {mmsi: data_dict[mmsi] for mmsi in sampled_mmsis}
-            for mmsi, track_segment in tqdm(data_dict.items(), desc="  Processing MMSIs", leave=False):
-                # Create a directory for this specific MMSI
-                mmsi_dir = os.path.join(TEMP_DIR, str(mmsi))
-                os.makedirs(mmsi_dir, exist_ok=True)
-                
-                # Save this segment into the MMSI's folder
-                # We name it after the original file to avoid collisions
-                segment_filename = os.path.basename(file_path)
-                output_path = os.path.join(mmsi_dir, segment_filename)
-                
-                with open(output_path, "wb") as out_f:
-                    pickle.dump(track_segment, out_f)
-    if VESSEL_TYPE_DIR is not None:
-        vessel_type_files = [f for f in os.listdir(VESSEL_TYPE_DIR) if f.endswith(".pkl")]
-        for vt_file in tqdm(vessel_type_files, desc="Copying vessel type files"):
-            with open(os.path.join(VESSEL_TYPE_DIR, vt_file), "rb") as f_src:
-                vessel_types = pickle.load(f_src)
-            for mmsi in vessel_types.keys():
-                mmsi_dir = os.path.join(TEMP_DIR, str(mmsi), 'vessel_types')
-                os.makedirs(mmsi_dir, exist_ok=True)
-                vessel_type_filename = os.path.join(mmsi_dir, vt_file)
-                with open(vessel_type_filename, "ab") as f_dst:
-                    pickle.dump({mmsi: vessel_types[mmsi]}, f_dst)
-                    
-    print("  Map & Shuffle Complete.")
-    print("-------------------------\n")
-    
+        for mmsi, track_segment in data_dict.items():
+            
+            # Create a directory for this specific MMSI
+            mmsi_dir = os.path.join(temp_dir, str(mmsi))
+            os.makedirs(mmsi_dir, exist_ok=True)
+            
+            # Save this segment into the MMSI's folder
+            # We name it after the original file to avoid collisions
+            segment_filename = os.path.basename(file_path)
+            output_path = os.path.join(mmsi_dir, segment_filename)
+            
+            joblib.dump(track_segment, output_path, compress=3)
+        
+        del data_dict  # Free memory
+
 def process_single_mmsi(mmsi_info):
-    """
-    Wrapper to unpack arguments for multiprocessing.
-    """
+    """ Process a single MMSI's track segments. """
     mmsi, mmsi_dir_path, final_dir = mmsi_info
     
-    # --- Load all segments for this MMSI ---
+    results = {}
+    
+    # Load all segments for this MMSI
     all_segments = []
     segment_files = [f for f in os.listdir(mmsi_dir_path) if f.endswith(".pkl") and not f.startswith("vessel_types_")]
     if not segment_files:
-        return None
-    
+        return {"error": f"No segment files found for MMSI {mmsi}",
+                "error_code": 0}
     for seg_file in segment_files:
             segment_path = os.path.join(mmsi_dir_path, seg_file)
-            with open(segment_path, "rb") as f:
-                track_segment = pickle.load(f)
-                all_segments.append(track_segment)
+            track_segment = joblib.load(segment_path)
+            all_segments.append(track_segment)
     
-    # --- Merge into one giant track ---
-    # This is the *only* point where all data for a
-    # single MMSI is in memory.
+    results['num_segments'] = len(all_segments)
+    
+    # Merge into one track
     try:
         full_track = np.concatenate(all_segments, axis=0)
-    except ValueError:
-        tqdm.write(f"    MMSI {mmsi}: Error concatenating. Skipping.")
-        return None
+        del all_segments  # Free memory
+        gc.collect()
+    except ValueError as e:
+        return {"error": f"Error concatenating segments for MMSI {mmsi}: {str(e)}",
+                "error_code": 1}
 
-    # --- Run processing ---
-    processed_data = process_single_mmsi_track(mmsi, full_track)
+    # Run processing for single MMSI's track
+    try:
+        processed_data, preprocessing_results = preprocess_mmsi_track(full_track)
+        results.update(preprocessing_results)
+        del full_track, preprocessing_results  # Free memory
+        gc.collect()
+    except Exception as e:
+        return {"error": f"Error processing track for MMSI {mmsi}: {str(e)}",
+                "error_code": 2}
     
-    # --- Save final result ---
+    # Save final result
     if processed_data:
-        for k, traj in processed_data.items():
+        for k, traj in processed_data.items(): # Constitues a sample
             final_output_path = os.path.join(final_dir, f"{mmsi}_{k}_processed.pkl")
             data_item = {'mmsi': mmsi, 'traj': traj}
-            with open(final_output_path, "wb") as f:
-                pickle.dump(data_item, f)
-        return True
-    return None
+            joblib.dump(data_item, final_output_path, compress=3)
     
-def stage_2_reduce(n_workers: int = None):
+    del processed_data # Free memory
+    gc.collect()
+            
+    return results
+    
+def reduce(final_dir: str,
+           temp_dir: str,
+           n_workers: int = None,
+           chunk_size: int = 10,
+           logger: CustomLogger = None):
     """
-    Loops through each MMSI folder in the TEMP_DIR *one at a time*.
-    Loads all data for *only* that MMSI, runs the processing,
-    and saves the final result.
+    Preprocess vessel trajectories by MMSI in parallel.
     """
-    print("--- Stage 2: Reduce (Processing by MMSI) ---")
+    os.makedirs(final_dir, exist_ok=True)
     
-    os.makedirs(FINAL_DIR, exist_ok=True)
+    logger.info(f"Output directory for final results: {final_dir}")
     
-    mmsi_folders = os.listdir(TEMP_DIR)
+    mmsi_folders = os.listdir(temp_dir)
+    
+    logger.info(f"Starting reduce phase on {len(mmsi_folders)} MMSI folders")
     
     # Prepare list of (mmsi, path, output_dir) tuples for parallel processing
     mmsi_tasks = []
     for mmsi in mmsi_folders:
-        mmsi_dir_path = os.path.join(TEMP_DIR, mmsi)
+        mmsi_dir_path = os.path.join(temp_dir, mmsi)
         if os.path.isdir(mmsi_dir_path):
-            mmsi_tasks.append((mmsi, mmsi_dir_path, FINAL_DIR))
-            
-    # Determine number of workers
-    if n_workers is None:
-        n_workers = cpu_count()
-    print(f"  Using {n_workers} parallel workers")
+            mmsi_tasks.append((mmsi, mmsi_dir_path, final_dir))
     
-    # Process in parallel
-    with Pool(processes=n_workers) as pool:
-        results = list(tqdm(
-            pool.imap_unordered(process_single_mmsi, mmsi_tasks),
-            total=len(mmsi_tasks),
-            desc="Processing MMSIs"
-        ))
+    results = defaultdict(int) # To count preprocessing statistics
     
-    print("  Reduce Complete.")
-    print("-------------------------\n")
+    # Process in parallel using imap_unordered to avoid accumulating results in memory
+    t0 = time()
+    e0 = 0
+    logging_interval = 1000
+    with Pool(processes=n_workers, maxtasksperchild=max(1,1000//chunk_size)) as pool:
+        for i, result in enumerate(pool.imap_unordered(process_single_mmsi, mmsi_tasks, chunksize=chunk_size), 1):
+            if "error" in result:
+                logger.warning(result["error"])
+                results[f"error_code_{result['error_code']}"] += 1
+            else:
+                for key, value in result.items():
+                    results[key] += value
+            if i % logging_interval == 0:
+                elapsed = time() - t0
+                errors = sum([results[f"error_code_{code}"] for code in range(3)]) - e0
+                logger.log_metrics({
+                    'reduce_avg_time': elapsed / float(i),
+                    'errors': errors,
+                    'pct_done': i / len(mmsi_tasks) * 100
+                    }, step=i//logging_interval)
+                t0 = time()
+                e0 = errors
     
+    logger.log_summary(results)
+        
+def combine_vessel_types(input_dir: str, final_dir: str, logger: CustomLogger):
+    """
+    Combine vessel type information from all vessel type files into a single mapping.
+    """
+    vessel_type_map = dict()
+    
+    logger.info("Combining vessel type information from all chunks...")
+    
+    vessel_type_files = [f for f in os.listdir(os.path.join(input_dir, 'vessel_types')) if f.endswith(".pkl")]
+    for vt_file in vessel_type_files:
+        vt_path = os.path.join(input_dir, 'vessel_types', vt_file)
+        vt_data = joblib.load(vt_path)
+        vessel_type_map.update(vt_data)
+    
+    # Save combined vessel type map
+    combined_vt_path = os.path.join(final_dir, "vessel_types.pkl")
+    joblib.dump(vessel_type_map, combined_vt_path, compress=3)
+    
+    logger.info(f"Combined vessel type map saved to {combined_vt_path}")
+        
 
-def combine_vessel_types():
-    """
-    Combines all individual vessel type files into a single dictionary.
-    """
-    vessel_types = dict()
-    vessel_types_files = [f for f in os.listdir(VESSEL_TYPE_DIR)] if VESSEL_TYPE_DIR is not None else []
-    for vt_file in tqdm(vessel_types_files, desc="Combining vessel type files"):
-        vt_path = os.path.join(VESSEL_TYPE_DIR, vt_file)
-        with open(vt_path, "rb") as f:
-            vt_data = pickle.load(f)
-            vessel_types.update(vt_data)
-    combined_path = os.path.join(FINAL_DIR, "vessel_types.pkl")
-    with open(combined_path, "wb") as f:
-        pickle.dump(vessel_types, f)
-    
 if __name__ == "__main__":
-    
-    parser = argparse.ArgumentParser(description="Map-Reduce preprocessing for AIS data.")
-    parser.add_argument("--input_dir", type=str, default="data/pickle_files", help="Directory containing input pickle files.")
-    parser.add_argument("--temp_dir", type=str, default="data/map_reduce_temp", help="Temporary directory for grouped MMSI data.")
-    parser.add_argument("--final_dir", type=str, default="data/map_reduce_final", help="Final output directory for processed MMSI tracks.")
-    parser.add_argument("--cleanup", action="store_true", help="Clean up temporary files and directories after processing.")
-    parser.add_argument("--test", action="store_true", help="Run in test mode (process only a subset of MMSIs).")
+    parser = ArgumentParser(description="Map-Reduce preprocessing of vessel trajectory data.")
+    parser.add_argument('--input_dir', type=str, required=True, help='Directory with chunked input files.')
+    parser.add_argument('--output_dir', type=str, required=True, help='Directory to store the final preprocessed files.')
+    parser.add_argument('--num_workers', type=int, default=None, help='Number of parallel workers to use.')
+    parser.add_argument('--run_name', type=str, default=None, help='Name of the logging run.')
     args = parser.parse_args()
     
-    IS_TEST = args.test
-    INPUT_DIR = args.input_dir
-    TEMP_DIR = args.temp_dir
-    FINAL_DIR = args.final_dir
-    VESSEL_TYPE_DIR = os.path.join(INPUT_DIR, 'vessel_types') if os.path.exists(os.path.join(INPUT_DIR, 'vessel_types')) else None
-
-    cleanup(force = args.cleanup)
-    stage_1_map_and_shuffle()
-    stage_2_reduce()
-    if VESSEL_TYPE_DIR is not None:
-        combine_vessel_types()
+    temp_dir = os.path.join(args.output_dir, 'temp_map_reduce')
+    if not args.num_workers:
+        num_workers = cpu_count() - 1
+    else:
+        num_workers = args.num_workers
     
-    # Remove temporary directory
-    if os.path.exists(TEMP_DIR):
-        shutil.rmtree(TEMP_DIR)
-        print(f"Removed temporary directory {TEMP_DIR}")
+    logger = CustomLogger(project_name='AIS-MDA', group='preprocessing', run_name=args.run_name, use_wandb=True)
+    logger.log_config({
+        "input_dir": args.input_dir,
+        "output_dir": args.output_dir,
+        "temp_dir": temp_dir,
+        "num_workers": num_workers
+    })
+    
+    map_and_shuffle(input_dir=args.input_dir, temp_dir=temp_dir, logger=logger)
+    
+    # Reduce in parallel
+    reduce(final_dir=args.output_dir, temp_dir=temp_dir, n_workers=num_workers, logger=logger)
+    
+    combine_vessel_types(input_dir=args.input_dir, final_dir=args.output_dir, logger=logger)
+    
+    logger.finish()
