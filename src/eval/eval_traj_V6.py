@@ -367,17 +367,22 @@ def evaluate_and_plot_trip(
                     # if step is too short after projection, push MIN_STEP_KM along track and re-project
                     d_km = 111.0 * np.hypot(fix_lat - prev_lat,
                                             (fix_lon - prev_lon) * np.cos(np.radians(prev_lat)))
-                    if d_km < MIN_STEP_KM:
-                        if brg_track is not None:
-                            th = np.radians(brg_track)
-                            nlat = prev_lat + (MIN_STEP_KM / 111.0) * np.cos(th)
-                            nlon = prev_lon + (MIN_STEP_KM / (111.0 * np.cos(np.radians(prev_lat)))) * np.sin(th + 1e-12)
-                            if is_water(nlat, nlon):
-                                fix_lat, fix_lon = nlat, nlon
-                            else:
-                                fix_lat, fix_lon = project_to_water(prev_lat, prev_lon, nlat, nlon)
-                        # else: keep as is
+                    
+                    
+                    #if d_km < MIN_STEP_KM:
+                    #    if brg_track is not None:
+                    #        th = np.radians(brg_track)
+                    #        nlat = prev_lat + (MIN_STEP_KM / 111.0) * np.cos(th)
+                    #        nlon = prev_lon + (MIN_STEP_KM / (111.0 * np.cos(np.radians(prev_lat)))) * np.sin(th + 1e-12)
+                    #        if is_water(nlat, nlon):
+                    #            fix_lat, fix_lon = nlat, nlon
+                    #        else:
+                    #            fix_lat, fix_lon = project_to_water(prev_lat, prev_lon, nlat, nlon)
+                    #    # else: keep as is
 
+                    
+                    
+                    
                     pred_lat_list.append(fix_lat)
                     pred_lon_list.append(fix_lon)
                     prev_lat, prev_lon = fix_lat, fix_lon
