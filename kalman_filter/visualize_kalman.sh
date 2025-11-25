@@ -30,7 +30,7 @@ echo "Running visualization script for final 3-hour horizon plots..."
 python -m kalman_filter.baselines.visualize_kalman \
     --final_dir /dtu/blackhole/10/178320/preprocessed_1/final/test \
     --output_dir data/figures/kalman_final_3h \
-    --horizon 36 \
+    --horizon 12 \
     --n_examples 10
 
 echo "Visualization script finished."
