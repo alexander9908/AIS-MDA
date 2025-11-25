@@ -149,22 +149,31 @@ def main(cfg_path: str):
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
-    opt = torch.optim.AdamW(model.parameters(), lr=float(cfg.get("lr", 3e-4)))
+    target_lr = float(cfg.get("lr", 3e-4))
+    opt = torch.optim.AdamW(model.parameters(), lr=target_lr)
     
     # Simple scheduler: Reduce LR when validation loss stops improving
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        opt, mode='min', factor=0.5, patience=2, verbose=True
+        opt, mode='min', factor=0.5, patience=max(2, int(cfg.get("early_stop_patience", 0))//4)
     )
 
     scaler_amp = torch.cuda.amp.GradScaler(enabled=torch.cuda.is_available())
     epochs = int(cfg.get("epochs", 5)); clip_norm = float(cfg.get("clip_norm", 1.0))
     print(f"[train] model={model_name}, window={window}, horizon={horizon}, device={device}")
+    
+    warmup_epochs = int(cfg.get("warmup_epochs", int(epochs//40))) # Default to 2.5% of epochs
 
     best_val = float("inf")
     patience   = int(cfg.get("early_stop_patience", 0))
     min_delta  = float(cfg.get("early_stop_min_delta", 0.0))
     no_improve = 0
     for epoch in range(1, epochs+1):
+        # Linear Warmup
+        if epoch <= warmup_epochs:
+            warmup_lr = target_lr * (epoch / warmup_epochs)
+            for param_group in opt.param_groups:
+                param_group['lr'] = warmup_lr
+
         model.train(); total = 0.0
         
         # Timing accumulators
@@ -268,7 +277,8 @@ def main(cfg_path: str):
         print(f"epoch {epoch}: train={train_loss:.4f}  val={val_loss:.4f}")
 
         current_lr = opt.param_groups[0]['lr']
-        scheduler.step(val_loss)
+        if epoch > warmup_epochs:
+            scheduler.step(val_loss)
 
         logger.log_metrics({"train_loss": train_loss, "val_loss": val_loss, "lr": current_lr}, step=epoch)
         # check improvement and save best
