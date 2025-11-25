@@ -126,19 +126,25 @@ def process_trajectory_chunk(trajectories: List[np.ndarray],
 
 # --- Main Pipeline ---
 def load_data(data_dir, max_files):
-    paths = sorted([p for p in Path(data_dir).glob("*_processed.pkl")])
+    """Load all pickle files from a directory."""
+    # Support both pathlib Path and string input
+    data_dir = Path(data_dir)
+    if not data_dir.exists():
+        raise FileNotFoundError(f"Directory not found: {data_dir}")
+        
+    paths = sorted([p for p in data_dir.glob("*.pkl")])
     if max_files: paths = paths[:max_files]
     
     trajs = []
-    print(f"Loading {len(paths)} files...")
+    print(f"Loading {len(paths)} files from {data_dir}...")
     for p in tqdm(paths):
         try:
             with open(p, "rb") as f:
                 data = pickle.load(f)
-                # Ensure we just get the numpy array
                 t = data['traj'] if isinstance(data, dict) else data
-                if len(t) > 50: trajs.append(t)
-        except: pass
+                if len(t) > 20: trajs.append(t) # Filter tiny trajectories
+        except Exception as e:
+            print(f"Error loading {p}: {e}")
     return trajs
 
 def main():
