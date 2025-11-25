@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# TPTrans full 3-month training on DTU A100 80GB
+# Traisformer full 3-month training on DTU A100 80GB
 #
 
 ### LSF options --------------------------------------------------------------
@@ -8,7 +8,7 @@
 #BSUB -q gpua100
 
 ### -- set the job Name --
-#BSUB -J tptrans_full_3m
+#BSUB -J traisformer_full_3m
 
 ### -- ask for number of CPU cores (min 4 per GPU is recommended) --
 #BSUB -n 4
@@ -18,7 +18,7 @@
 #BSUB -R "select[gpu80gb]"
 
 ### -- set walltime limit: hh:mm (max 24:00 for GPU queues) --
-#BSUB -W 1:00
+#BSUB -W 24:00
 
 ### -- request system memory (per job, not per core) --
 #BSUB -R "rusage[mem=8GB]"
@@ -51,4 +51,6 @@ module swap cuda/12.6.3
 
 # Run the TPTrans training with the full config
 # (make sure configs/traj_tptrans_full.yaml exists and is correct)
-python -m src.train.train_traj_ES --config configs/traj_tptrans_full.yaml
+python -m src.train.train_traj_ES --config configs/traisformer_full.yaml
+python -m src.train.train_traj_ES --config configs/traisformer_medium.yaml
+python -m src.train.train_traj_ES --config configs/traisformer_small.yaml

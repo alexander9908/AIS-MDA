@@ -5,7 +5,7 @@ task: trajectory
 processed_dir: /dtu/blackhole/10/178320/preprocessed_1/final/
 
 # Where to save the final/best checkpoint
-out_dir: data/checkpoints/tptrans/tptrans_full/
+out_dir: data/checkpoints/tptrans/tptrans_medium/
 
 # Sequence setup
 window: 64          # length of observed history
@@ -26,9 +26,9 @@ features: [LAT, LON, SOG, COG, HEADING, ROT, NAV_STT, TIMESTAMP, MMSI]
 model:
   name: tptrans
   d_model: 512      # latent dimension
-  nhead: 16 #4 #8          # Transformer heads
-  enc_layers: 12 #8     # encoder depth
-  dec_layers: 12 #4     # GRU layers
+  nhead: 8 #4 #8          # Transformer heads
+  enc_layers: 8 #8     # encoder depth
+  dec_layers: 8 #4     # GRU layers
 
 # Training setup
 loss: huber
@@ -48,6 +48,5 @@ early_stop_min_delta: 1e-3 # require at least 1e-3 improvement in val loss
 huber_delta: 1.0    # SmoothL1 beta (default in code)
 clip_norm: 1.0      # gradient clipping max-norm (default in code)
 
-
 wandb_group: tp_trans_full_medium_small
-run_name: tptrans_full_run
+run_name: tptrans_medium_run

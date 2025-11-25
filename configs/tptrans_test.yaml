@@ -2,10 +2,10 @@ task: trajectory
 
 # CHANGE this to the directory with the 3-month preprocessed data.
 # It must contain "train", "val", (and optionally "test") subfolders.
-processed_dir: /dtu/blackhole/10/178320/preprocessed_1/final/
+processed_dir: data/map_reduced/ # /dtu/blackhole/10/178320/preprocessed_1/final/
 
 # Where to save the final/best checkpoint
-out_dir: data/checkpoints/tptrans/tptrans_full/
+out_dir: data/checkpoints/tp_trans_test/ #tptrans_full/
 
 # Sequence setup
 window: 64          # length of observed history
@@ -37,17 +37,11 @@ optimizer: adamw
 # These are what your training script reads:
 lr: 0.0003          # AdamW learning rate
 batch_size: 512 #128     # was 96; 128 is safe on an A100 80GB
-epochs: 500                # allow enough room to converge
-epoch_samples: 4
-
-early_stop_patience: 50     # stop if 50 epochs pass without real improvement
-early_stop_min_delta: 1e-3 # require at least 1e-3 improvement in val loss
+epochs: 100                # allow enough room to converge
+early_stop_patience: 15     # stop if 15 epochs pass without real improvement
+early_stop_min_delta: 1e-4 # require at least 1e-4 improvement in val loss
 
 
 # Extra stability knobs used in train_traj_ES.py:
 huber_delta: 1.0    # SmoothL1 beta (default in code)
 clip_norm: 1.0      # gradient clipping max-norm (default in code)
-
-
-wandb_group: tp_trans_full_medium_small
-run_name: tptrans_full_run
