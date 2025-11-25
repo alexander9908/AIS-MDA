@@ -6,6 +6,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 import os 
+import time
 
 from ..config import load_config
 from ..models import GRUSeq2Seq, TPTrans
@@ -13,11 +14,10 @@ from ..utils.datasets_V3 import make_ais_dataset
 from ..models.traisformer1 import TrAISformer, BinSpec
 from ..utils.logging import CustomLogger
 from torchinfo import summary
+from multiprocessing import cpu_count
 
 def huber_loss(pred, target, delta: float = 1.0):
     return nn.SmoothL1Loss(beta=delta)(pred, target)
-
-
 
 def main(cfg_path: str):
     cfg = load_config(cfg_path)
@@ -54,8 +54,9 @@ def main(cfg_path: str):
                               epoch_samples=max(2, epoch_samples // 4) # Use less samples for validation
                               )
 
-    dl_train = DataLoader(ds_train, batch_size=int(cfg.get("batch_size", 128)), shuffle=True, num_workers=0, pin_memory=True)
-    dl_val   = DataLoader(ds_val,   batch_size=int(cfg.get("batch_size", 128)), shuffle=False, num_workers=0, pin_memory=True)
+    n_workers = cpu_count()
+    dl_train = DataLoader(ds_train, batch_size=int(cfg.get("batch_size", 128)), shuffle=True, num_workers=n_workers, pin_memory=True)
+    dl_val   = DataLoader(ds_val,   batch_size=int(cfg.get("batch_size", 128)), shuffle=False, num_workers=n_workers//2, pin_memory=True)
 
     ## Dataset statistics
     logger.info(f"--- Dataset Statistics ---")
@@ -149,6 +150,12 @@ def main(cfg_path: str):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=float(cfg.get("lr", 3e-4)))
+    
+    # Simple scheduler: Reduce LR when validation loss stops improving
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        opt, mode='min', factor=0.5, patience=2, verbose=True
+    )
+
     scaler_amp = torch.cuda.amp.GradScaler(enabled=torch.cuda.is_available())
     epochs = int(cfg.get("epochs", 5)); clip_norm = float(cfg.get("clip_norm", 1.0))
     print(f"[train] model={model_name}, window={window}, horizon={horizon}, device={device}")
@@ -159,8 +166,29 @@ def main(cfg_path: str):
     no_improve = 0
     for epoch in range(1, epochs+1):
         model.train(); total = 0.0
+        
+        # Timing accumulators
+        t_data_load = 0.0
+        t_data_transfer = 0.0
+        t_forward = 0.0
+        t_loss = 0.0
+        t_backward = 0.0
+        t_optim = 0.0
+        
+        if torch.cuda.is_available(): torch.cuda.synchronize()
+        t0 = time.time()
+
         for xb, yb in dl_train:
+            if torch.cuda.is_available(): torch.cuda.synchronize()
+            t1 = time.time()
+            t_data_load += (t1 - t0)
+
             xb, yb = xb.to(device), yb.to(device)  # xb:(B,window,4)  yb:(B,horizon,out_feats)
+            
+            if torch.cuda.is_available(): torch.cuda.synchronize()
+            t2 = time.time()
+            t_data_transfer += (t2 - t1)
+
             opt.zero_grad(set_to_none=True)
             with torch.cuda.amp.autocast(enabled=torch.cuda.is_available()):
                 if model_name == "traisformer":
@@ -168,15 +196,60 @@ def main(cfg_path: str):
                     # yb contains [lat,lon,sog,cog] in cols 0..3
                     future_idxs = to_bins(torch.cat([yb, torch.zeros_like(yb[..., :0])], dim=-1)[...,:4])  # quick split
                     logits = model(past_idxs, future_idxs)
+                    
+                    if torch.cuda.is_available(): torch.cuda.synchronize()
+                    t3 = time.time()
+                    t_forward += (t3 - t2)
+
                     loss = model.ce_loss_multi(logits, future_idxs)
+                    
+                    if torch.cuda.is_available(): torch.cuda.synchronize()
+                    t4 = time.time()
+                    t_loss += (t4 - t3)
                 else:
                     pred = model(xb)               # (B,horizon,2)
+                    
+                    if torch.cuda.is_available(): torch.cuda.synchronize()
+                    t3 = time.time()
+                    t_forward += (t3 - t2)
+
                     loss = nn.SmoothL1Loss(beta=float(cfg.get("huber_delta", 1.0)))(pred, yb[..., :2])
+                    
+                    if torch.cuda.is_available(): torch.cuda.synchronize()
+                    t4 = time.time()
+                    t_loss += (t4 - t3)
+
             scaler_amp.scale(loss).backward()
+            
+            if torch.cuda.is_available(): torch.cuda.synchronize()
+            t5 = time.time()
+            t_backward += (t5 - t4)
+
             scaler_amp.unscale_(opt); torch.nn.utils.clip_grad_norm_(model.parameters(), clip_norm)
             scaler_amp.step(opt); scaler_amp.update()
+            
+            if torch.cuda.is_available(): torch.cuda.synchronize()
+            t6 = time.time()
+            t_optim += (t6 - t5)
+
             total += float(loss.item()) * xb.size(0)
+            
+            if torch.cuda.is_available(): torch.cuda.synchronize()
+            t0 = time.time()
+
         train_loss = total / len(ds_train)
+        
+        # Log timings
+        logger.log_metrics({
+            "time/data_load": t_data_load,
+            "time/data_transfer": t_data_transfer,
+            "time/forward": t_forward,
+            "time/loss": t_loss,
+            "time/backward": t_backward,
+            "time/optim": t_optim,
+            "time/gpu_compute": t_forward + t_loss + t_backward + t_optim,
+            "time/total_epoch": t_data_load + t_data_transfer + t_forward + t_loss + t_backward + t_optim
+        }, step=epoch)
 
         # --- val ---
         model.eval(); vtotal = 0.0
@@ -194,7 +267,10 @@ def main(cfg_path: str):
         val_loss = vtotal / len(ds_val)
         print(f"epoch {epoch}: train={train_loss:.4f}  val={val_loss:.4f}")
 
-        logger.log_metrics({"train_loss": train_loss, "val_loss": val_loss}, step=epoch)
+        current_lr = opt.param_groups[0]['lr']
+        scheduler.step(val_loss)
+
+        logger.log_metrics({"train_loss": train_loss, "val_loss": val_loss, "lr": current_lr}, step=epoch)
         # check improvement and save best
         improved = val_loss < (best_val - min_delta)
 
