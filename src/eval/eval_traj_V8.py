@@ -1,4 +1,4 @@
-# src/eval/eval_traj_V7.py
+# src/eval/eval_traj_V8.py
 from __future__ import annotations
 import matplotlib
 matplotlib.use('Agg') # Fix for running without a display/GUI
@@ -10,7 +10,6 @@ import torch
 import matplotlib.pyplot as plt
 
 # ---------------- Models ----------------
-# Adjust these imports to your tree if paths differ.
 from src.models.traisformer1 import TrAISformer, BinSpec
 from src.models.tptrans import TPTrans
 
@@ -101,13 +100,6 @@ def cumdist(lat: np.ndarray, lon: np.ndarray) -> np.ndarray:
 
 def looks_norm(x: np.ndarray) -> bool:
     return (np.nanmin(x) >= -0.05 and np.nanmax(x) <= 1.05)
-
-def to_idx_1xT(x: torch.Tensor, device) -> torch.Tensor:
-    x = torch.as_tensor(x, device=device)
-    x = x.squeeze()
-    if x.dim() == 0: x = x.view(1, 1)
-    elif x.dim() == 1: x = x.unsqueeze(0)
-    return x.to(dtype=torch.long).contiguous()
 
 def clean_state_dict(sd):
     if "state_dict" in sd: sd = sd["state_dict"]
@@ -227,7 +219,6 @@ def evaluate_and_plot_trip(fpath: str, trip: np.ndarray, model, meta, args, samp
 
     if args.model.lower() == "tptrans":
         # --- TPTrans Logic ---
-        # Construct normalized input sequence
         seq_in = np.stack([
             full_lat_norm[:cut],
             full_lon_norm[:cut],
@@ -235,23 +226,11 @@ def evaluate_and_plot_trip(fpath: str, trip: np.ndarray, model, meta, args, samp
             full_cog_norm[:cut]
         ], axis=1).astype(np.float32)
         
-        # Autoregressive generation loop
-        # NOTE: The model is trained with a fixed horizon (e.g., 12 steps).
-        # To predict a longer future (e.g., 20% of the trip), we MUST loop:
-        # 1. Predict 12 steps.
-        # 2. Append them to the history.
-        # 3. Predict the next 12 steps.
-        # This is standard autoregressive forecasting.
         curr_seq_in = seq_in.copy()
         all_pred_deltas = []
         
-        # We want to generate enough steps to cover N_future
-        # If match_distance is on, we might want a bit more buffer, but N_future is a good baseline target.
-        # Let's generate at least N_future steps.
         steps_needed = N_future
         steps_generated = 0
-        
-        # Safety break to prevent infinite loops if something goes wrong
         max_steps = steps_needed + args.horizon * 2 
         
         while steps_generated < steps_needed:
@@ -260,7 +239,6 @@ def evaluate_and_plot_trip(fpath: str, trip: np.ndarray, model, meta, args, samp
             X_tensor = torch.from_numpy(X_in).to(device)
 
             with torch.no_grad():
-                # Output: [1, Horizon, 2]
                 out = model(X_tensor)[0].cpu().numpy()
             
             # 1. Un-scale using the factor from checkpoint
@@ -275,18 +253,15 @@ def evaluate_and_plot_trip(fpath: str, trip: np.ndarray, model, meta, args, samp
             steps_generated += len(out)
             
             # Update history for autoregression
-            # Calculate new absolute normalized positions to append
             last_lat = curr_seq_in[-1, 0]
             last_lon = curr_seq_in[-1, 1]
             last_sog = curr_seq_in[-1, 2]
             last_cog = curr_seq_in[-1, 3]
             
-            # Cumulative sum for this chunk
             chunk_cumsum = np.cumsum(out, axis=0)
             new_lats = last_lat + chunk_cumsum[:, 0]
             new_lons = last_lon + chunk_cumsum[:, 1]
             
-            # Append new rows (repeating last SOG/COG)
             new_rows = np.zeros((len(out), 4), dtype=np.float32)
             new_rows[:, 0] = new_lats
             new_rows[:, 1] = new_lons
@@ -302,8 +277,9 @@ def evaluate_and_plot_trip(fpath: str, trip: np.ndarray, model, meta, args, samp
         deltas_pred = np.concatenate(all_pred_deltas, axis=0)
 
         # Integrate deltas to get Lat/Lon
-        pred_lat_list = []
-        pred_lon_list = []
+        # FIX: Start the list with the current position to ensure the line connects
+        pred_lat_list = [cur_lat]
+        pred_lon_list = [cur_lon]
         prev_lat, prev_lon = cur_lat, cur_lon
 
         for k in range(len(deltas_pred)):
@@ -331,24 +307,33 @@ def evaluate_and_plot_trip(fpath: str, trip: np.ndarray, model, meta, args, samp
         pred_lon = np.array(pred_lon_list)
 
     else:
-        # --- TrAISformer Logic ---
-        # (TrAISformer logic needs binning, keeping it minimal/placeholder if not used)
-        pred_lat = np.zeros(N_future) + cur_lat 
-        pred_lon = np.zeros(N_future) + cur_lon
+        # Placeholder for TrAISformer
+        pred_lat = np.zeros(N_future + 1) + cur_lat 
+        pred_lon = np.zeros(N_future + 1) + cur_lon
 
-    # Trim
+    # Trim by distance if requested
     if args.match_distance and len(pred_lat) > 1 and len(lats_true_eval) > 1:
+        # Calculate true distance
         dt_true = cumdist(lats_true_eval, lons_true_eval)[-1]
+        # Calculate pred distance (ignoring the start point for cumulative dist check relative to start)
         cd = cumdist(pred_lat, pred_lon)
         keep = int(np.searchsorted(cd, dt_true, side="right"))
-        keep = max(1, min(keep, len(pred_lat)))
+        keep = max(2, min(keep, len(pred_lat))) # ensure at least 2 points (start + 1 pred)
         pred_lat, pred_lon = pred_lat[:keep], pred_lon[:keep]
 
     # Metrics
-    n_comp = min(len(pred_lat), len(lats_true_eval))
+    # NOTE: pred_lat[0] is t=0 (current position). pred_lat[1] is t+1 (first prediction).
+    # lats_true_eval starts at t+1.
+    # So we compare pred_lat[1:] with lats_true_eval.
+    
+    preds_to_eval_lat = pred_lat[1:]
+    preds_to_eval_lon = pred_lon[1:]
+    
+    n_comp = min(len(preds_to_eval_lat), len(lats_true_eval))
+    
     if n_comp > 0:
-        ade = float(np.mean([haversine_km(lats_true_eval[i], lons_true_eval[i], pred_lat[i], pred_lon[i]) for i in range(n_comp)]))
-        fde = float(haversine_km(lats_true_eval[n_comp-1], lons_true_eval[n_comp-1], pred_lat[n_comp-1], pred_lon[n_comp-1]))
+        ade = float(np.mean([haversine_km(lats_true_eval[i], lons_true_eval[i], preds_to_eval_lat[i], preds_to_eval_lon[i]) for i in range(n_comp)]))
+        fde = float(haversine_km(lats_true_eval[n_comp-1], lons_true_eval[n_comp-1], preds_to_eval_lat[n_comp-1], preds_to_eval_lon[n_comp-1]))
     else:
         ade, fde = np.nan, np.nan
 
@@ -389,7 +374,6 @@ def evaluate_and_plot_trip(fpath: str, trip: np.ndarray, model, meta, args, samp
                 aspect_geo = 1.0 / cos_lat
                 
                 # Grid resolution
-                # We want n_lon / n_lat ~ (dlon * cos_lat) / dlat
                 dlat = lat_max - lat_min
                 dlon = lon_max - lon_min
                 n_lat_pix = 300
@@ -403,6 +387,7 @@ def evaluate_and_plot_trip(fpath: str, trip: np.ndarray, model, meta, args, samp
                 img[...] = (0.85, 0.92, 0.96, 1.0) 
                 img[land > 0.5] = (0.80, 0.80, 0.80, 1.0) 
                 
+                # Explicitly set origin='lower' to match make_water_mask logic (Lat min at index 0)
                 ax.imshow(img, extent=(lon_min, lon_max, lat_min, lat_max), origin="lower", aspect=aspect_geo)
             except Exception as e:
                 print(f"[Plot Warning] Could not generate water mask: {e}")
@@ -414,7 +399,9 @@ def evaluate_and_plot_trip(fpath: str, trip: np.ndarray, model, meta, args, samp
 
         ax.plot(lons_past, lats_past, lw=2.0, color="#2a77ff", label="past")
         ax.plot(lons_true_all, lats_true_all, lw=2.5, color="#2aaa2a", label="true")
-        if len(pred_lon) > 0:
+        
+        if len(pred_lon) > 1:
+            # pred_lon includes the start point, so this will draw a connected line
             ax.plot(pred_lon, pred_lat, lw=2.5, color="#d33", label="pred")
         
         ax.scatter([lons_past[-1]], [lats_past[-1]], s=40, c="#d33", edgecolors="k", zorder=5)
@@ -473,9 +460,7 @@ def main():
     
     # Filter by MMSI if provided
     if args.mmsi:
-        # Split the input string by comma to support multiple MMSIs
         target_mmsis = str(args.mmsi).strip().split(',')
-        # Filter files if they start with ANY of the target MMSIs
         files = [f for f in files if any(os.path.basename(f).startswith(m + "_") for m in target_mmsis)]
         print(f"[Eval] Filtering for MMSIs {target_mmsis}, found {len(files)} trips.")
 

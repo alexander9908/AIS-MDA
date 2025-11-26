@@ -9,6 +9,7 @@ import os
 import time
 import sys
 from multiprocessing import cpu_count
+from torchinfo import summary
 
 # Adjust these imports if your folder structure is different
 from ..config import load_config
@@ -16,38 +17,31 @@ from ..models.tptrans_V2 import TPTrans
 from ..utils.datasets_V3 import make_ais_dataset
 from ..utils.logging import CustomLogger
 
-# --- CONFIGURATION FOR NORMALIZATION ---
-# These MUST match the region you are training/evaluating on.
-# Based on your eval command: --lat_min 54.0 --lat_max 58.0 --lon_min 6.0 --lon_max 16.0
-NORM_CONFIG = {
+# --- CRITICAL: MATCH THESE TO PREPROCESSING.PY ---
+# I extracted these from your uploaded preprocessing.py
+# If these don't match the data creation, predictions will be wrong.
+DATA_BOUNDS = {
     "LAT_MIN": 54.0,
-    "LAT_MAX": 59.0,
-    "LON_MIN": 5.0,
-    "LON_MAX": 17.0,
-    "SOG_MAX": 30.0,  # Max speed in knots
+    "LAT_MAX": 59.0,  # Note: Preprocessing uses 59, Eval used 58. Using 59 matches data.
+    "LON_MIN": 5.0,   # Note: Preprocessing uses 5.0
+    "LON_MAX": 17.0,  # Note: Preprocessing uses 17.0
+    "SOG_MAX": 30.0,
 }
 
-
-def normalize_batch(batch_x, cfg):
+def denormalize_batch(batch_norm, bounds):
     """
-    Normalizes a batch of AIS data [B, T, 4] to [0, 1].
-    Channels: 0=Lat, 1=Lon, 2=SOG, 3=COG
+    Converts Normalized Data [0, 1] back to Degrees for Target Calculation.
     """
-    norm_x = batch_x.clone()
+    batch_deg = batch_norm.clone()
     
-    # 1. Lat: (val - min) / (max - min)
-    norm_x[:, :, 0] = (batch_x[:, :, 0] - cfg["LAT_MIN"]) / (cfg["LAT_MAX"] - cfg["LAT_MIN"])
+    lat_range = bounds["LAT_MAX"] - bounds["LAT_MIN"]
+    lon_range = bounds["LON_MAX"] - bounds["LON_MIN"]
     
-    # 2. Lon: (val - min) / (max - min)
-    norm_x[:, :, 1] = (batch_x[:, :, 1] - cfg["LON_MIN"]) / (cfg["LON_MAX"] - cfg["LON_MIN"])
+    # 0 -> Lat_Min, 1 -> Lat_Max
+    batch_deg[:, :, 0] = batch_norm[:, :, 0] * lat_range + bounds["LAT_MIN"]
+    batch_deg[:, :, 1] = batch_norm[:, :, 1] * lon_range + bounds["LON_MIN"]
     
-    # 3. SOG: val / max (Clamped to 1.0)
-    norm_x[:, :, 2] = torch.clamp(batch_x[:, :, 2] / cfg["SOG_MAX"], 0.0, 1.0)
-    
-    # 4. COG: val / 360.0 (Cyclic 0-360)
-    norm_x[:, :, 3] = batch_x[:, :, 3] / 360.0
-    
-    return norm_x
+    return batch_deg
 
 def main(cfg_path: str):
     cfg = load_config(cfg_path)
@@ -60,8 +54,7 @@ def main(cfg_path: str):
     window = int(cfg.get("window", 64))
     horizon = int(cfg.get("horizon", 12))
     
-    # Scale factor for Output Deltas (Physical Degree Difference * 100)
-    # This keeps gradients healthy.
+    # Scale Factor: 100.0 means we train the model to output (Degrees * 100).
     SCALE_FACTOR = 100.0
 
     logger.log_config(cfg)
@@ -70,12 +63,10 @@ def main(cfg_path: str):
         "horizon": horizon, 
         "mode": "delta_training_scaled",
         "scale_factor": SCALE_FACTOR,
-        "norm_bounds": NORM_CONFIG
+        "data_bounds": DATA_BOUNDS
     })
 
-    # --- DATASETS ---
     out_feats = 4 
-    
     start_mode = cfg.get("start_mode", "head")
     kmeans_cfg = cfg.get("kmeans", None)
     epoch_samples = int(cfg.get("epoch_samples", 20))
@@ -95,9 +86,7 @@ def main(cfg_path: str):
                               start_mode="uniform",
                               epoch_samples=max(2, epoch_samples // 4))
 
-    # --- WINDOWS FIX ---
     if os.name == 'nt':
-        print("[System] Detected Windows. Setting num_workers=0.")
         n_workers = 0
     else:
         n_workers = cpu_count()
@@ -107,11 +96,7 @@ def main(cfg_path: str):
     dl_val   = DataLoader(ds_val, batch_size=int(cfg.get("batch_size", 128)), 
                           shuffle=False, num_workers=n_workers//2, pin_memory=True)
 
-    # --- MODEL (TPTrans) ---
-    name = cfg["model"]["name"].lower()
-    if name != "tptrans":
-        raise ValueError(f"This V2 script is specifically for TPTrans Delta training. Got {name}")
-
+    # --- MODEL ---
     feat_dim = 4
     model = TPTrans(feat_dim=feat_dim,
                     d_model=cfg["model"].get("d_model", 192),
@@ -120,13 +105,23 @@ def main(cfg_path: str):
                     dec_layers=cfg["model"].get("dec_layers", 2),
                     horizon=horizon)
     model_name = "tptrans"
-
     ckpt_name = f"traj_{model_name}_delta.pt"
     best_path = out_dir / ckpt_name
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
     
+    # Print model summary
+    try:
+        # We perform a dummy forward pass to let torchinfo calculate shapes
+        # input_size=(Batch_Size, Window, Features) -> (1, window, feat_dim)
+        summ = summary(model, input_size=(1, window, feat_dim))
+        print(summ) 
+        # If you want it in the log file as well:
+        # logger.info(f"\n{summ}") 
+    except Exception as e:
+        print(f"Could not generate model summary: {e}")
+
     target_lr = float(cfg.get("lr", 3e-4))
     opt = torch.optim.AdamW(model.parameters(), lr=target_lr)
     
@@ -140,12 +135,11 @@ def main(cfg_path: str):
         scaler_amp = torch.cuda.amp.GradScaler(enabled=torch.cuda.is_available())
 
     criterion = nn.SmoothL1Loss(beta=float(cfg.get("huber_delta", 1.0)))
-
     epochs = int(cfg.get("epochs", 5))
     clip_norm = float(cfg.get("clip_norm", 1.0))
     
-    print(f"[Train] Model={model_name} (Delta Mode), Device={device}, Scale={SCALE_FACTOR}")
-    print(f"[Train] Normalization Bounds: {NORM_CONFIG}")
+    print(f"[Train] Model={model_name} (Delta Mode), Scale={SCALE_FACTOR}")
+    print(f"[Train] Data Bounds (from preprocessing.py): {DATA_BOUNDS}")
     
     warmup_epochs = int(cfg.get("warmup_epochs", max(1, int(epochs//40))))
     best_val = float("inf")
@@ -165,28 +159,27 @@ def main(cfg_path: str):
         for xb, yb in dl_train:
             xb, yb = xb.to(device), yb.to(device)
             
-            # --- NORMALIZATION STEP ---
-            # We normalize the INPUT (xb) so the Transformer sees [0, 1]
-            xb_norm = normalize_batch(xb, NORM_CONFIG)
-            # --------------------------
-
+            # xb is ALREADY NORMALIZED [0, 1] from the dataset loader
+            
             opt.zero_grad(set_to_none=True)
             
             with torch.amp.autocast('cuda', enabled=torch.cuda.is_available()):
-                # 1. Predict Deltas using NORMALIZED input
-                pred_deltas = model(xb_norm) # [B, H, 2]
+                # 1. Predict Deltas based on Normalized Input (Correct)
+                pred_deltas = model(xb) # [B, H, 2]
 
-                # 2. Compute Target Deltas using RAW PHYSICAL coordinates (Degrees)
-                # We want the model to learn "Change in Degrees * 100"
-                last_past = xb[:, -1, :2] 
-                future_pos = yb[:, :, :2]
+                # 2. To get PHYSICAL targets (Degrees), we must Denormalize
+                xb_deg = denormalize_batch(xb, DATA_BOUNDS)
+                yb_deg = denormalize_batch(yb, DATA_BOUNDS)
+
+                last_past_deg = xb_deg[:, -1, :2] 
+                future_pos_deg = yb_deg[:, :, :2]
                 
-                full_seq = torch.cat([last_past.unsqueeze(1), future_pos], dim=1)
+                full_seq_deg = torch.cat([last_past_deg.unsqueeze(1), future_pos_deg], dim=1)
                 
-                # Calculate Raw Deltas (Degrees)
-                raw_target_deltas = full_seq[:, 1:] - full_seq[:, :-1]
+                # 3. Calculate Deltas in DEGREES
+                raw_target_deltas = full_seq_deg[:, 1:] - full_seq_deg[:, :-1]
                 
-                # Scale up (0.001 deg -> 0.1 unitless target)
+                # 4. Scale up (e.g. 0.005 deg -> 0.5)
                 target_deltas = raw_target_deltas * SCALE_FACTOR
 
                 loss = criterion(pred_deltas, target_deltas)
@@ -209,17 +202,16 @@ def main(cfg_path: str):
             for xb, yb in dl_val:
                 xb, yb = xb.to(device), yb.to(device)
                 
-                # --- NORMALIZATION STEP (Val) ---
-                xb_norm = normalize_batch(xb, NORM_CONFIG)
-                # --------------------------------
+                pred_deltas = model(xb)
                 
-                pred_deltas = model(xb_norm)
+                xb_deg = denormalize_batch(xb, DATA_BOUNDS)
+                yb_deg = denormalize_batch(yb, DATA_BOUNDS)
                 
-                last_past = xb[:, -1, :2]
-                future_pos = yb[:, :, :2]
-                full_seq = torch.cat([last_past.unsqueeze(1), future_pos], dim=1)
+                last_past_deg = xb_deg[:, -1, :2]
+                future_pos_deg = yb_deg[:, :, :2]
+                full_seq_deg = torch.cat([last_past_deg.unsqueeze(1), future_pos_deg], dim=1)
                 
-                raw_target_deltas = full_seq[:, 1:] - full_seq[:, :-1]
+                raw_target_deltas = full_seq_deg[:, 1:] - full_seq_deg[:, :-1]
                 target_deltas = raw_target_deltas * SCALE_FACTOR
 
                 vloss = criterion(pred_deltas, target_deltas)
@@ -246,19 +238,17 @@ def main(cfg_path: str):
                 "state_dict": model.state_dict(),
                 "scale_factor": SCALE_FACTOR,
                 "model_type": "delta_tptrans",
-                "norm_config": NORM_CONFIG # Save bounds so Eval knows!
+                "data_bounds": DATA_BOUNDS
             }
             torch.save(state, best_path)
 
     print(f"Saved best model to {best_path}")
-    
     logger.log_summary({
         'best_val_loss': best_val,
         'final_train_loss': final_train_loss,
         'final_val_loss': final_val_loss,
         'epochs_completed': epochs
     })
-    
     logger.artifact(artifact=best_path, name=f"{model_name}_delta_model", type="model")
     logger.finish()
 
