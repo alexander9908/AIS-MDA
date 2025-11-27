@@ -8,6 +8,7 @@ from typing import Optional, Tuple, Dict, Any, List
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
+import joblib
 
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
@@ -46,8 +47,14 @@ def parse_trip(fname: str) -> Tuple[int, int]:
     return 0, 0
 
 def load_trip(path: str, min_points: int = 30) -> np.ndarray:
-    with open(path, "rb") as f:
-        data = pickle.load(f)
+    # Try loading with joblib first (handles compressed files)
+    try:
+        data = joblib.load(path)
+    except Exception:
+        # Fallback to standard pickle if joblib fails
+        with open(path, "rb") as f:
+            data = pickle.load(f)
+
     trip = data["traj"] if isinstance(data, dict) and "traj" in data else np.asarray(data)
     trip = np.asarray(trip)
     if len(trip) < int(min_points):
