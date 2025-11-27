@@ -390,9 +390,16 @@ def generate_folium_map(plot_data_list, out_dir, args):
             tooltip=tooltip_txt + " (Past)"
         ).add_to(m)
 
-        # True (Green)
+        # True (Green) - FIXED: Now connects to the last past point
+        # Combine last past point + all true points to ensure connection
+        start_point_lat = d['lats_past'][-1]
+        start_point_lon = d['lons_past'][-1]
+        
+        true_lats = np.concatenate(([start_point_lat], d['lats_true']))
+        true_lons = np.concatenate(([start_point_lon], d['lons_true']))
+
         folium.PolyLine(
-            locations=list(zip(d['lats_true'], d['lons_true'])),
+            locations=list(zip(true_lats, true_lons)),
             color=STYLE["true"], weight=3, opacity=0.8,
             tooltip=tooltip_txt + " (True)"
         ).add_to(m)
