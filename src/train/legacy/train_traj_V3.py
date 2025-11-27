@@ -6,10 +6,10 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
-from ..config import load_config
-from ..models import GRUSeq2Seq, TPTrans
-from ..utils.datasets_V3 import make_ais_dataset
-from ..models.traisformer1 import TrAISformer, BinSpec
+from ...config import load_config
+from ...models import GRUSeq2Seq, TPTrans
+from ...utils.datasets_V3 import make_ais_dataset
+from ...models.traisformer1 import TrAISformer, BinSpec
 
 
 def huber_loss(pred, target, delta: float = 1.0):
