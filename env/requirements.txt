@@ -19,6 +19,7 @@ contextily
 xyzservices
 cartopy 
 scipy
+folium
 
 # Parallel helpers
 pandarallel
