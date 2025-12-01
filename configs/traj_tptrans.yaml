@@ -1,26 +1,51 @@
 task: trajectory
-processed_dir: data/map_reduced/
-out_dir: data/checkpoints
-window: 64
-horizon: 12
+
+# CHANGE this to the directory with the 3-month preprocessed data.
+# It must contain "train", "val", (and optionally "test") subfolders.
+processed_dir: data/processed_final/map_reduced/
+
+# Where to save the final/best checkpoint
+out_dir: data/checkpoints/tptrans_v3/
+# Sequence setup
+window: 64          # length of observed history
+horizon: 12         # prediction horizon
+
 start_mode: kmeans  # set to "kmeans" to enable centroid-based starting points
 kmeans:
-  n_clusters: 64
-  samples_per_traj: 300
-  max_points: 250000
+  n_clusters: 50
+  samples_per_traj: 200
+  max_points: 200000
   n_init: 10
   random_state: 42
+
+# Full feature list in the preprocessed pickle; the model will still only
+# use the first 4: [LAT, LON, SOG, COG].
 features: [LAT, LON, SOG, COG, HEADING, ROT, NAV_STT, TIMESTAMP, MMSI]
+
 model:
   name: tptrans
-  d_model: 192
-  nhead: 4
-  enc_layers: 4
-  dec_layers: 2
-  # dim_ff: 2048      # <— for compatibility with old checkpoints
-  # use_posenc: false # <— if you want to exactly mirror old ckpts
+  d_model: 512      # latent dimension
+  nhead: 4 #4 #8          # Transformer heads
+  enc_layers: 4 #8     # encoder depth
+  dec_layers: 4 #4     # GRU layers
+
+# Training setup
 loss: huber
 optimizer: adamw
-lr: 0.0003
-batch_size: 96
-epochs: 40
+
+# These are what your training script reads:
+lr: 0.0003          # AdamW learning rate
+batch_size: 128 #512 #128     # was 96; 128 is safe on an A100 80GB
+epochs: 25                # allow enough room to converge
+epoch_samples: 4
+
+early_stop_patience: 5     # stop if 5 epochs pass without real improvement
+early_stop_min_delta: 1e-3 # require at least 1e-3 improvement in val loss
+
+
+# Extra stability knobs used in train_traj_ES.py:
+huber_delta: 1.0    # SmoothL1 beta (default in code)
+clip_norm: 1.0      # gradient clipping max-norm (default in code)
+
+wandb_group: tp_trans_local_test_v3
+run_name: tptrans_small_run_v3

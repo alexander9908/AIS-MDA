@@ -17,6 +17,9 @@ pyproj
 roaring-landmask
 contextily
 xyzservices
+cartopy 
+scipy
+folium
 
 # Parallel helpers
 pandarallel
