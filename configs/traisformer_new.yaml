@@ -1,0 +1,32 @@
+# configs/traisformer.yaml
+task: trajectory
+# CHANGE TO YOUR DATA PATH
+processed_dir: data/processed_final/map_reduced/
+out_dir: data/checkpoints/traisformer_run/
+
+window: 64
+horizon: 12
+
+# Binning Resolution (Crucial for Classification)
+bins:
+  n_lat: 384
+  n_lon: 768
+  n_sog: 50
+  n_cog: 72
+
+model:
+  name: traisformer
+  d_model: 512
+  nhead: 8
+  num_layers: 6
+  dropout: 0.1
+  emb_lat: 128
+  emb_lon: 128
+  emb_sog: 64
+  emb_cog: 64
+
+loss: cross_entropy
+lr: 0.0003
+batch_size: 128
+epochs: 25
+epoch_samples: 5
