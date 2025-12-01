@@ -19,15 +19,17 @@ import cartopy.feature as cfeature
 
 # ---------------- Models ----------------
 from src.models.traisformer1 import TrAISformer, BinSpec
-try:
-    from src.models.tptrans_V2 import TPTrans
-except ImportError:
-    # Try importing V3 if V2 fails or is replaced
-    try:
-        from src.models.tptrans_V3 import TPTrans
-    except ImportError:
-        print("[Warning] Could not import TPTrans, falling back to basic definition")
-        from src.models.tptrans import TPTrans
+from src.models.tptrans_V2 import TPTrans
+
+# try:
+#     from src.models.tptrans_V2 import TPTrans
+# except ImportError:
+#     # Try importing V3 if V2 fails or is replaced
+#     try:
+#         from src.models.tptrans_V3 import TPTrans
+#     except ImportError:
+#         print("[Warning] Could not import TPTrans, falling back to basic definition")
+#         from src.models.tptrans import TPTrans
 
 # ---------------- Water mask ----------------
 from src.utils.water_guidance import is_water, project_to_water

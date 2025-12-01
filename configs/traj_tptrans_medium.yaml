@@ -5,7 +5,7 @@ task: trajectory
 processed_dir: /dtu/blackhole/10/178320/preprocessed_2/final/
 
 # Where to save the final/best checkpoint
-out_dir: data/checkpoints/tptrans_delta_v2/tptrans_medium/
+out_dir: data/checkpoints/tptrans_delta_v3/tptrans_medium/
 
 # Sequence setup
 window: 64          # length of observed history
@@ -48,5 +48,5 @@ early_stop_min_delta: 1e-3 # require at least 1e-3 improvement in val loss
 huber_delta: 1.0    # SmoothL1 beta (default in code)
 clip_norm: 1.0      # gradient clipping max-norm (default in code)
 
-wandb_group: tp_trans_fms_delta_v2
-run_name: tptrans_medium_run_delta_v2
+wandb_group: tp_trans_fms_delta_v3
+run_name: tptrans_medium_run_delta_v3
