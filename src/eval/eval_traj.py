@@ -54,6 +54,40 @@ plt.rcParams.update({
 })
 
 # ---------------- Helpers ----------------
+def compute_horizon_metrics(lats_true: np.ndarray, lons_true: np.ndarray, 
+                           lats_pred: np.ndarray, lons_pred: np.ndarray,
+                           horizons_steps: List[int] = [12, 24, 36]) -> Dict[str, Optional[float]]:
+    """
+    Compute Haversine distance at specific time horizons (1h, 2h, 3h).
+    
+    Args:
+        lats_true: Ground truth latitudes (N,)
+        lons_true: Ground truth longitudes (N,)
+        lats_pred: Predicted latitudes (M,)
+        lons_pred: Predicted longitudes (M,)
+        horizons_steps: List of timestep indices (e.g., [12, 24, 36] for 1h/2h/3h at 5min sampling)
+    
+    Returns:
+        Dict with keys like 'ade_1h_km', 'ade_2h_km', 'ade_3h_km' (None if insufficient data)
+    """
+    metrics = {}
+    n_true = len(lats_true)
+    n_pred = len(lats_pred)
+    
+    for h in horizons_steps:
+        key = f"ade_{h//12}h_km"  # 12 steps = 1 hour
+        
+        if n_true > h and n_pred > h:
+            # Compute mean error up to this horizon
+            errors = [haversine_km(lats_true[i], lons_true[i], lats_pred[i], lons_pred[i]) 
+                     for i in range(h + 1)]  # Include step h itself
+            metrics[key] = float(np.mean(errors))
+        else:
+            metrics[key] = None  # Not enough data for this horizon
+    
+    return metrics
+
+
 def parse_trip(fname: str) -> Tuple[int, int]:
     base = os.path.basename(fname).replace("_processed.pkl", "")
     parts = base.split("_")
@@ -298,17 +332,26 @@ def evaluate_and_plot_trip(fpath: str, trip: np.ndarray, model, meta, args, samp
     preds_to_eval_lat = pred_lat[1:]
     preds_to_eval_lon = pred_lon[1:]
     n_comp = min(len(preds_to_eval_lat), len(lats_true_eval))
-    
     if n_comp > 0:
-        ade = float(np.mean([haversine_km(lats_true_eval[i], lons_true_eval[i], preds_to_eval_lat[i], preds_to_eval_lon[i]) for i in range(n_comp)]))
-        fde = float(haversine_km(lats_true_eval[n_comp-1], lons_true_eval[n_comp-1], preds_to_eval_lat[n_comp-1], preds_to_eval_lon[n_comp-1]))
+        ade = float(np.mean([haversine_km(lats_true_eval[i], lons_true_eval[i], 
+                                         preds_to_eval_lat[i], preds_to_eval_lon[i]) 
+                            for i in range(n_comp)]))
+        fde = float(haversine_km(lats_true_eval[n_comp-1], lons_true_eval[n_comp-1], 
+                                preds_to_eval_lat[n_comp-1], preds_to_eval_lon[n_comp-1]))
     else:
         ade, fde = np.nan, np.nan
-
-    # Prepare return dict
+    
+    # NEW: Horizon-specific metrics
+    horizon_metrics = compute_horizon_metrics(
+        lats_true_eval, lons_true_eval,
+        preds_to_eval_lat, preds_to_eval_lon,
+        horizons_steps=[12, 24, 36]
+    )
+    
     res = {
         "mmsi": mmsi, "trip": tid, "cut_idx": cut,
         "ade_km": ade, "fde_km": fde,
+        **horizon_metrics,  # Add 'ade_1h_km', 'ade_2h_km', 'ade_3h_km'
         "png": "skipped"
     }
     
@@ -580,6 +623,16 @@ def main():
         print(f"Total Trips: {len(metrics)}")
         print(f"Mean ADE:    {mean_ade:.2f} km  | Median ADE: {median_ade:.2f} km")
         print(f"Mean FDE:    {mean_fde:.2f} km  | Median FDE: {median_fde:.2f} km")
+        # Horizon-specific statistics
+        for horizon_key in ['ade_1h_km', 'ade_2h_km', 'ade_3h_km']:
+            valid_vals = [m[horizon_key] for m in metrics if m.get(horizon_key) is not None]
+            n_valid = len(valid_vals)
+            if n_valid > 0:
+                mean_val = np.mean(valid_vals)
+                median_val = np.median(valid_vals)
+                print(f"{horizon_key}: {mean_val:.2f} km (median {median_val:.2f} km) | N={n_valid}")
+            else:
+                print(f"{horizon_key}: No samples available")
         print(f"Metrics saved to: {out_csv}")
     else:
         print("No metrics collected.")
