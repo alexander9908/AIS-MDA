@@ -161,11 +161,24 @@ def build_model(kind: str, ckpt: str, feat_dim: int, horizon: int):
         num_layers = sd_top.get("num_layers", 8)
         dropout = sd_top.get("dropout", 0.1)
         
-        # FIX: Force use_water_mask=False to prevent internal sampler collapse.
-        # We handle water masking externally in the evaluation loop.
+        # --- CRITICAL FIX: use_water_mask=False ---
+        # We disable the internal mask to prevent "All Land" detection errors
+        # which cause the model to default to index 0 (Bottom-Left).
+        # We perform Ray-Casting Water masking externally in the eval loop instead.
         model = TrAISformer(bins=bins, d_model=d_model, nhead=nhead, num_layers=num_layers, dropout=dropout, use_water_mask=False)
         model.load_state_dict(clean_sd, strict=False)
-        print(f"[Model] TrAISformer loaded with Bins: {bins.to_dict()}")
+        
+        # --- FIX: Disable restrictive sampling heuristics ---
+        # first_step_neigh=True forces the first step to be within 1 bin of the start.
+        # With high-res bins and 5-min steps, a ship can easily move >1 bin.
+        # forbid_same_cell=True forces movement, which is bad for stationary ships.
+        model.set_sampler(first_step_neigh=False, forbid_same_cell=False)
+        
+        print("-" * 40)
+        print(f"[Model] TrAISformer Loaded.")
+        print(f"        Internal Bins: Lat[{bins.lat_min}:{bins.lat_max}] Lon[{bins.lon_min}:{bins.lon_max}]")
+        print(f"        Internal Water Mask: DISABLED (Using external Ray-Casting)")
+        print("-" * 40)
         return model, meta
         
     raise ValueError(f"unknown model kind: {kind}")
@@ -183,7 +196,7 @@ def is_path_safe(lat1, lon1, lat2, lon2, steps=5):
 def evaluate_and_plot_trip(fpath: str, trip: np.ndarray, model, meta, args, sample_idx: int) -> Dict[str, Any]:
     mmsi, tid = parse_trip(fpath)
     
-    # 1. Denormalize using DATA BOUNDS (from CLI args matching preprocessing)
+    # 1. Denormalize using DATA BOUNDS (CLI args)
     full_lat_norm = trip[:, 0]
     full_lon_norm = trip[:, 1]
     full_sog_norm = trip[:, 2]
@@ -191,8 +204,6 @@ def evaluate_and_plot_trip(fpath: str, trip: np.ndarray, model, meta, args, samp
 
     full_lat_deg = full_lat_norm * (args.lat_max - args.lat_min) + args.lat_min
     full_lon_deg = full_lon_norm * (args.lon_max - args.lon_min) + args.lon_min
-    
-    # For SOG/COG, we use args.speed_max to recover Knots
     full_sog_kn = full_sog_norm * args.speed_max
     full_cog_deg = full_cog_norm * 360.0
 
@@ -213,7 +224,6 @@ def evaluate_and_plot_trip(fpath: str, trip: np.ndarray, model, meta, args, samp
     raw_lons_future = full_lon_deg[cut:cut+N_future]
     lats_true_plot = np.concatenate(([cur_lat], raw_lats_future))
     lons_true_plot = np.concatenate(([cur_lon], raw_lons_future))
-    
     lats_true_eval = raw_lats_future
     lons_true_eval = raw_lons_future
 
@@ -226,13 +236,12 @@ def evaluate_and_plot_trip(fpath: str, trip: np.ndarray, model, meta, args, samp
     best_fde = float('inf')
 
     if args.model.lower() == "traisformer":
-        # --- TRAISFORMER LOGIC ---
+        # --- TRAISFORMER ---
         past_lat = full_lat_deg[:cut]
         past_lon = full_lon_deg[:cut]
         past_sog = full_sog_kn[:cut]
         past_cog = full_cog_deg[:cut]
         
-        # Prepare inputs using model's binning
         past_idxs = {
             "lat": model.bins.lat_to_bin(torch.from_numpy(past_lat).float()).unsqueeze(0).to(device),
             "lon": model.bins.lon_to_bin(torch.from_numpy(past_lon).float()).unsqueeze(0).to(device),
@@ -240,7 +249,6 @@ def evaluate_and_plot_trip(fpath: str, trip: np.ndarray, model, meta, args, samp
             "cog": model.bins.cog_to_bin(torch.from_numpy(past_cog).float()).unsqueeze(0).to(device),
         }
         
-        # Sample N times
         n_samples = max(1, args.samples)
         for s in range(n_samples):
             with torch.no_grad():
@@ -252,24 +260,21 @@ def evaluate_and_plot_trip(fpath: str, trip: np.ndarray, model, meta, args, samp
                     top_k=args.top_k
                 )
             
-            # Decode Bins -> Degrees
+            # Decode to degrees
             pred_lats_deg = model.bins.bin_to_lat_mid(out_idxs["lat"].flatten().cpu()).numpy()
             pred_lons_deg = model.bins.bin_to_lon_mid(out_idxs["lon"].flatten().cpu()).numpy()
             
-            # --- EXTERNAL WATER MASKING ---
-            # Check the path and fix if necessary
+            # Apply External Water Mask (Ray Casting)
             fixed_lats, fixed_lons = [], []
             curr_l, curr_o = cur_lat, cur_lon
             
             for k in range(len(pred_lats_deg)):
                 cand_l, cand_o = float(pred_lats_deg[k]), float(pred_lons_deg[k])
-                
                 is_safe, _ = is_path_safe(curr_l, curr_o, cand_l, cand_o, steps=5)
                 
                 if is_safe:
                     fix_l, fix_o = cand_l, cand_o
                 else:
-                    # Project to water if path hits land
                     fix_l, fix_o = project_to_water(curr_l, curr_o, cand_l, cand_o)
                 
                 fixed_lats.append(fix_l)
@@ -279,7 +284,7 @@ def evaluate_and_plot_trip(fpath: str, trip: np.ndarray, model, meta, args, samp
             pred_lats_deg = np.array(fixed_lats)
             pred_lons_deg = np.array(fixed_lons)
 
-            # Metrics for this sample
+            # Metrics
             n_comp = min(len(pred_lats_deg), len(lats_true_eval))
             if n_comp > 0:
                 curr_ade = float(np.mean([haversine_km(lats_true_eval[i], lons_true_eval[i], pred_lats_deg[i], pred_lons_deg[i]) for i in range(n_comp)]))
@@ -287,7 +292,6 @@ def evaluate_and_plot_trip(fpath: str, trip: np.ndarray, model, meta, args, samp
             else:
                 curr_ade, curr_fde = 9999.0, 9999.0
 
-            # Keep Best Sample
             if curr_ade < best_ade:
                 best_ade = curr_ade
                 best_fde = curr_fde
@@ -295,7 +299,7 @@ def evaluate_and_plot_trip(fpath: str, trip: np.ndarray, model, meta, args, samp
                 best_pred_lon = np.concatenate(([cur_lon], pred_lons_deg))
 
     elif args.model.lower() == "tptrans":
-        # --- TPTRANS LOGIC ---
+        # --- TPTRANS ---
         seq_in = np.stack([full_lat_norm[:cut], full_lon_norm[:cut], full_sog_norm[:cut], full_cog_norm[:cut]], axis=1).astype(np.float32)
         curr_seq_in = seq_in.copy()
         pred_lat_list = [cur_lat]; pred_lon_list = [cur_lon]
@@ -524,6 +528,10 @@ def main():
     print(f"[DEBUG] DATA BOUNDS (Math):")
     print(f"   Lat: {args.lat_min} to {args.lat_max}")
     print(f"   Lon: {args.lon_min} to {args.lon_max}")
+    if args.plot_lat_min:
+        print(f"[DEBUG] PLOT BOUNDS (Camera):")
+        print(f"   Lat: {args.plot_lat_min} to {args.plot_lat_max}")
+        print(f"   Lon: {args.plot_lon_min} to {args.plot_lon_max}")
     print("-" * 40)
 
     metrics = []
@@ -565,6 +573,7 @@ def main():
         median_ade = np.median(ade_values)
         median_fde = np.median(fde_values)
         
+        # Add medians to CSV rows for completeness
         metrics_clean = []
         for m in metrics:
             m_clean = {k:v for k,v in m.items() if k != 'plot_data'}
