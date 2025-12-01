@@ -14,6 +14,9 @@ from matplotlib.lines import Line2D
 # Interactive Map
 import folium
 
+from src.models.kalman_filter.baselines.train_kalman import evaluate_trip_kalman, Bounds
+from src.models.kalman_filter.kalman_filter import KalmanFilterParams
+
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 
@@ -51,6 +54,40 @@ plt.rcParams.update({
 })
 
 # ---------------- Helpers ----------------
+def compute_horizon_metrics(lats_true: np.ndarray, lons_true: np.ndarray, 
+                           lats_pred: np.ndarray, lons_pred: np.ndarray,
+                           horizons_steps: List[int] = [12, 24, 36]) -> Dict[str, Optional[float]]:
+    """
+    Compute Haversine distance at specific time horizons (1h, 2h, 3h).
+    
+    Args:
+        lats_true: Ground truth latitudes (N,)
+        lons_true: Ground truth longitudes (N,)
+        lats_pred: Predicted latitudes (M,)
+        lons_pred: Predicted longitudes (M,)
+        horizons_steps: List of timestep indices (e.g., [12, 24, 36] for 1h/2h/3h at 5min sampling)
+    
+    Returns:
+        Dict with keys like 'ade_1h_km', 'ade_2h_km', 'ade_3h_km' (None if insufficient data)
+    """
+    metrics = {}
+    n_true = len(lats_true)
+    n_pred = len(lats_pred)
+    
+    for h in horizons_steps:
+        key = f"ade_{h//12}h_km"  # 12 steps = 1 hour
+        
+        if n_true > h and n_pred > h:
+            # Compute mean error up to this horizon
+            errors = [haversine_km(lats_true[i], lons_true[i], lats_pred[i], lons_pred[i]) 
+                     for i in range(h + 1)]  # Include step h itself
+            metrics[key] = float(np.mean(errors))
+        else:
+            metrics[key] = None  # Not enough data for this horizon
+    
+    return metrics
+
+
 def parse_trip(fname: str) -> Tuple[int, int]:
     base = os.path.basename(fname).replace("_processed.pkl", "")
     parts = base.split("_")
@@ -197,7 +234,8 @@ def evaluate_and_plot_trip(fpath: str, trip: np.ndarray, model, meta, args, samp
     lons_true_eval = raw_lons_future
 
     device = torch.device("cuda" if torch.cuda.is_available() and not args.cpu else "cpu")
-    model = model.to(device).eval()
+    if args.model.lower() != "kalman":
+        model = model.to(device).eval()
 
     if args.model.lower() == "tptrans":
         # TPTrans Prediction Loop
@@ -258,6 +296,28 @@ def evaluate_and_plot_trip(fpath: str, trip: np.ndarray, model, meta, args, samp
 
         pred_lat = np.array(pred_lat_list)
         pred_lon = np.array(pred_lon_list)
+    elif args.model.lower() == "kalman":
+        window = max(1, min(int(args.past_len), cut))
+        horizon_steps = N_future
+        if len(trip) < cut + horizon_steps:
+            raise ValueError("insufficient future points for Kalman forecast")
+        start_idx = cut - window
+        kf_slice = trip[start_idx:start_idx + window + horizon_steps]
+        bounds = Bounds(args.lat_min, args.lat_max, args.lon_min, args.lon_max)
+        kalman_params = None
+        if isinstance(meta, dict):
+            kalman_params = meta.get("kalman_params")
+        if kalman_params is None:
+            kalman_params = KalmanFilterParams()
+        eval_res = evaluate_trip_kalman(
+            kf_slice,
+            window_size=window,
+            horizon=horizon_steps,
+            kf_params=kalman_params,
+            bounds=bounds,
+        )
+        pred_lat = np.concatenate(([cur_lat], eval_res["pred_real"][:, 0]))
+        pred_lon = np.concatenate(([cur_lon], eval_res["pred_real"][:, 1]))
     else:
         pred_lat = np.zeros(N_future + 1) + cur_lat 
         pred_lon = np.zeros(N_future + 1) + cur_lon
@@ -272,17 +332,26 @@ def evaluate_and_plot_trip(fpath: str, trip: np.ndarray, model, meta, args, samp
     preds_to_eval_lat = pred_lat[1:]
     preds_to_eval_lon = pred_lon[1:]
     n_comp = min(len(preds_to_eval_lat), len(lats_true_eval))
-    
     if n_comp > 0:
-        ade = float(np.mean([haversine_km(lats_true_eval[i], lons_true_eval[i], preds_to_eval_lat[i], preds_to_eval_lon[i]) for i in range(n_comp)]))
-        fde = float(haversine_km(lats_true_eval[n_comp-1], lons_true_eval[n_comp-1], preds_to_eval_lat[n_comp-1], preds_to_eval_lon[n_comp-1]))
+        ade = float(np.mean([haversine_km(lats_true_eval[i], lons_true_eval[i], 
+                                         preds_to_eval_lat[i], preds_to_eval_lon[i]) 
+                            for i in range(n_comp)]))
+        fde = float(haversine_km(lats_true_eval[n_comp-1], lons_true_eval[n_comp-1], 
+                                preds_to_eval_lat[n_comp-1], preds_to_eval_lon[n_comp-1]))
     else:
         ade, fde = np.nan, np.nan
-
-    # Prepare return dict
+    
+    # NEW: Horizon-specific metrics
+    horizon_metrics = compute_horizon_metrics(
+        lats_true_eval, lons_true_eval,
+        preds_to_eval_lat, preds_to_eval_lon,
+        horizons_steps=[12, 24, 36]
+    )
+    
     res = {
         "mmsi": mmsi, "trip": tid, "cut_idx": cut,
         "ade_km": ade, "fde_km": fde,
+        **horizon_metrics,  # Add 'ade_1h_km', 'ade_2h_km', 'ade_3h_km'
         "png": "skipped"
     }
     
@@ -423,7 +492,7 @@ def generate_folium_map(plot_data_list, out_dir, args):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--split_dir", required=True)
-    p.add_argument("--ckpt", required=True)
+    p.add_argument("--ckpt", default=None)
     p.add_argument("--model", required=True)
     p.add_argument("--out_dir", required=True)
     
@@ -461,6 +530,8 @@ def main():
     p.add_argument("--speed_max", type=float, default=30.0)
 
     args = p.parse_args()
+    if args.model.lower() != "kalman" and not args.ckpt:
+        p.error("--ckpt is required unless --model kalman")
     Path(args.out_dir).mkdir(parents=True, exist_ok=True)
 
     files = sorted(glob.glob(os.path.join(args.split_dir, "*_processed.pkl")))
@@ -469,7 +540,14 @@ def main():
         files = [f for f in files if any(os.path.basename(f).startswith(m + "_") for m in target_mmsis)]
 
     feat_dim = 4
-    model, meta = build_model(args.model, args.ckpt, feat_dim, args.horizon)
+    if args.model.lower() == "kalman":
+        model = None
+        meta = {
+            "kalman_params": KalmanFilterParams(),
+            "norm_config": None,
+        }
+    else:
+        model, meta = build_model(args.model, args.ckpt, feat_dim, args.horizon)
     
     # --- Auto-fill DATA bounds from checkpoint ---
     norm_config = meta.get("norm_config")
@@ -545,6 +623,16 @@ def main():
         print(f"Total Trips: {len(metrics)}")
         print(f"Mean ADE:    {mean_ade:.2f} km  | Median ADE: {median_ade:.2f} km")
         print(f"Mean FDE:    {mean_fde:.2f} km  | Median FDE: {median_fde:.2f} km")
+        # Horizon-specific statistics
+        for horizon_key in ['ade_1h_km', 'ade_2h_km', 'ade_3h_km']:
+            valid_vals = [m[horizon_key] for m in metrics if m.get(horizon_key) is not None]
+            n_valid = len(valid_vals)
+            if n_valid > 0:
+                mean_val = np.mean(valid_vals)
+                median_val = np.median(valid_vals)
+                print(f"{horizon_key}: {mean_val:.2f} km (median {median_val:.2f} km) | N={n_valid}")
+            else:
+                print(f"{horizon_key}: No samples available")
         print(f"Metrics saved to: {out_csv}")
     else:
         print("No metrics collected.")

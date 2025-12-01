@@ -2,7 +2,7 @@ import torch
 import sys
 import os
 
-checkpoint_path = r"d:\DTU\AIS-MDA\data\checkpoints\hpc_1_delta\traj_tptrans_delta.pt"
+checkpoint_path = "/Users/alexanderschiotz/Desktop/DTU/Master/Deep Learning/projects/ais-mda/data/checkpoints/tptrans_v3/traj_tptrans_delta.pt"
 
 print(f"Loading checkpoint from {checkpoint_path}...")
 

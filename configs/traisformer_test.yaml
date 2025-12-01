@@ -1,7 +1,12 @@
 task: trajectory
 
+<<<<<<< HEAD
 processed_dir: /dtu/blackhole/10/178320/preprocessed_2/final/
 out_dir: data/checkpoints/traisformer_hpc_new_small/ #traisformer_full/
+=======
+processed_dir: data/map_reduced/ # /dtu/blackhole/10/178320/preprocessed_1/final/
+out_dir: data/checkpoints/traisformer_test_new/ #traisformer_full/
+>>>>>>> fc149b2e73bd073cde2c2bd2527dd6a5cc08eb23
 window: 64
 horizon: 12
 start_mode: kmeans  # set to "kmeans" to enable centroid-based starting points
@@ -26,10 +31,10 @@ coarse_beta: 0.2
 # Discretization region/bins
 bins:
   lat_min: 54.0
-  lat_max: 58.0
-  lon_min: 6.0
-  lon_max: 16.0
-  sog_max: 50.0
+  lat_max: 59.0
+  lon_min: 5.0
+  lon_max: 17.0
+  sog_max: 30.0
   n_lat: 384
   n_lon: 768
   n_sog: 50
@@ -39,7 +44,7 @@ loss: ce         # (ignored; TrAISformer uses CE internally)
 optimizer: adamw
 lr: 0.0003
 batch_size: 512
-epochs: 100
+epochs: 30
 
 early_stop_patience: 15
 early_stop_min_delta: 1e-4
