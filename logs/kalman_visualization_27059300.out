@@ -1,0 +1,128 @@
+Running visualization script for final 3-hour horizon plots...
+Generating Kalman Filter visualizations...
+Generating 10 trajectory plots...
+Adding basemap with roaring-landmask...
+roaring-landmask failed (No constructor defined). Falling back to contextily or image mask.
+Adding basemap with contextily...
+  -> Saved data/figures/kalman_final_3h/kalman_prediction_01_best_mmsi-629009748_idx-10.png
+Adding basemap with roaring-landmask...
+roaring-landmask failed (No constructor defined). Falling back to contextily or image mask.
+Adding basemap with contextily...
+  -> Saved data/figures/kalman_final_3h/kalman_prediction_02_sample_2_mmsi-235093299_idx-24.png
+Adding basemap with roaring-landmask...
+roaring-landmask failed (No constructor defined). Falling back to contextily or image mask.
+Adding basemap with contextily...
+  -> Saved data/figures/kalman_final_3h/kalman_prediction_03_sample_3_mmsi-235093299_idx-16.png
+Adding basemap with roaring-landmask...
+roaring-landmask failed (No constructor defined). Falling back to contextily or image mask.
+Adding basemap with contextily...
+  -> Saved data/figures/kalman_final_3h/kalman_prediction_04_sample_4_mmsi-229381000_idx-34.png
+Adding basemap with roaring-landmask...
+roaring-landmask failed (No constructor defined). Falling back to contextily or image mask.
+Adding basemap with contextily...
+  -> Saved data/figures/kalman_final_3h/kalman_prediction_05_median_mmsi-235093299_idx-99.png
+Adding basemap with roaring-landmask...
+roaring-landmask failed (No constructor defined). Falling back to contextily or image mask.
+Adding basemap with contextily...
+  -> Saved data/figures/kalman_final_3h/kalman_prediction_06_sample_6_mmsi-538008268_idx-63.png
+Adding basemap with roaring-landmask...
+roaring-landmask failed (No constructor defined). Falling back to contextily or image mask.
+Adding basemap with contextily...
+  -> Saved data/figures/kalman_final_3h/kalman_prediction_07_sample_7_mmsi-212797000_idx-6.png
+Adding basemap with roaring-landmask...
+roaring-landmask failed (No constructor defined). Falling back to contextily or image mask.
+Adding basemap with contextily...
+  -> Saved data/figures/kalman_final_3h/kalman_prediction_08_sample_8_mmsi-538008268_idx-34.png
+Adding basemap with roaring-landmask...
+roaring-landmask failed (No constructor defined). Falling back to contextily or image mask.
+Adding basemap with contextily...
+  -> Saved data/figures/kalman_final_3h/kalman_prediction_09_sample_9_mmsi-461000249_idx-29.png
+Adding basemap with roaring-landmask...
+roaring-landmask failed (No constructor defined). Falling back to contextily or image mask.
+Adding basemap with contextily...
+  -> Saved data/figures/kalman_final_3h/kalman_prediction_10_worst_mmsi-212797000_idx-35.png
+Finished exporting trajectory plots.
+
+Done! Check data/figures/kalman_final_3h for output.
+Visualization script finished.
+Plots saved in data/figures/kalman_final_3h
+
+------------------------------------------------------------
+Sender: LSF System <lsfadmin@hpc.dtu.dk>
+Subject: Job 27059300: <visualize_kalman> in cluster <dcc> Done
+
+Job <visualize_kalman> was submitted from host <gbarlogin1> by user <s221710> in cluster <dcc> at Mon Nov 17 20:13:43 2025
+Job was executed on host(s) <n-62-31-5>, in queue <hpc>, as user <s221710> in cluster <dcc> at Mon Nov 17 20:13:44 2025
+</zhome/f5/1/178320> was used as the home directory.
+</zhome/f5/1/178320/AIS-MDA> was used as the working directory.
+Started at Mon Nov 17 20:13:44 2025
+Terminated at Mon Nov 17 20:14:24 2025
+Results reported at Mon Nov 17 20:14:24 2025
+
+Your job looked like:
+
+------------------------------------------------------------
+# LSBATCH: User input
+#!/bin/bash
+#BSUB -J visualize_kalman
+#BSUB -o logs/kalman_visualization_%J.out
+#BSUB -e logs/kalman_visualization_%J.err
+#BSUB -q hpc
+#BSUB -n 1
+#BSUB -R "rusage[mem=4G]"
+#BSUB -W 00:30
+
+### cd to repo dir
+cd ~/AIS-MDA
+
+### load python module FIRST (before venv)
+module swap python3/3.13.2
+
+### activate environment (after module load)
+source .venv/bin/activate
+
+### Create log directory if it doesn't exist
+mkdir -p logs
+
+# --- Install/Verify roaring-landmask ---
+# The PBF file will be downloaded to the cache on first run.
+# echo "Verifying/installing roaring-landmask..."
+# pip install roaring-landmask
+
+# --- Run Visualization ---
+# This script generates the high-quality, zoomed-in plots for the final 3-hour evaluation.
+echo "Running visualization script for final 3-hour horizon plots..."
+python -m kalman_filter.baselines.visualize_kalman \
+    --final_dir /dtu/blackhole/10/178320/preprocessed_1/final/test \
+    --output_dir data/figures/kalman_final_3h \
+    --horizon 36 \
+    --n_examples 10
+
+echo "Visualization script finished."
+echo "Plots saved in data/figures/kalman_final_3h"
+
+------------------------------------------------------------
+
+Successfully completed.
+
+Resource usage summary:
+
+    CPU time :                                   28.61 sec.
+    Max Memory :                                 143 MB
+    Average Memory :                             143.00 MB
+    Total Requested Memory :                     4096.00 MB
+    Delta Memory :                               3953.00 MB
+    Max Swap :                                   -
+    Max Processes :                              4
+    Max Threads :                                5
+    Run time :                                   49 sec.
+    Turnaround time :                            41 sec.
+
+The output (if any) is above this job summary.
+
+
+
+PS:
+
+Read file <logs/kalman_visualization_27059300.err> for stderr output of this job.
+

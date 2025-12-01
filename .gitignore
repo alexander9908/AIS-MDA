@@ -14,6 +14,12 @@ data/
 
 .python-version
 locals/*
+src/eval/README_MTM.md
+README_SELF_SUPERVISED.md
 TEMP_DIR/
 hpc_jobs/logs/*
 wandb/
+
+UNDERSTANDING_MTM.md
+KALMAN_FILTER_SUMMARY.md
+KALMAN_QUICK_START.md
