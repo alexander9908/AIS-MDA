@@ -1,12 +1,8 @@
 """
 Quick test script to verify Kalman Filter implementation.
 """
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-
 import numpy as np
-from kalman_filter.kalman_filter import KalmanFilter, TrajectoryKalmanFilter, KalmanFilterParams
+from src.models.kalman_filter.kalman_filter import KalmanFilter, TrajectoryKalmanFilter, KalmanFilterParams
 
 
 def test_basic_kalman():

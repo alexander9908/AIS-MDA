@@ -14,6 +14,9 @@ from matplotlib.lines import Line2D
 # Interactive Map
 import folium
 
+from src.models.kalman_filter.baselines.train_kalman import evaluate_trip_kalman, Bounds
+from src.models.kalman_filter.kalman_filter import KalmanFilterParams
+
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 
@@ -197,7 +200,8 @@ def evaluate_and_plot_trip(fpath: str, trip: np.ndarray, model, meta, args, samp
     lons_true_eval = raw_lons_future
 
     device = torch.device("cuda" if torch.cuda.is_available() and not args.cpu else "cpu")
-    model = model.to(device).eval()
+    if args.model.lower() != "kalman":
+        model = model.to(device).eval()
 
     if args.model.lower() == "tptrans":
         # TPTrans Prediction Loop
@@ -258,6 +262,28 @@ def evaluate_and_plot_trip(fpath: str, trip: np.ndarray, model, meta, args, samp
 
         pred_lat = np.array(pred_lat_list)
         pred_lon = np.array(pred_lon_list)
+    elif args.model.lower() == "kalman":
+        window = max(1, min(int(args.past_len), cut))
+        horizon_steps = N_future
+        if len(trip) < cut + horizon_steps:
+            raise ValueError("insufficient future points for Kalman forecast")
+        start_idx = cut - window
+        kf_slice = trip[start_idx:start_idx + window + horizon_steps]
+        bounds = Bounds(args.lat_min, args.lat_max, args.lon_min, args.lon_max)
+        kalman_params = None
+        if isinstance(meta, dict):
+            kalman_params = meta.get("kalman_params")
+        if kalman_params is None:
+            kalman_params = KalmanFilterParams()
+        eval_res = evaluate_trip_kalman(
+            kf_slice,
+            window_size=window,
+            horizon=horizon_steps,
+            kf_params=kalman_params,
+            bounds=bounds,
+        )
+        pred_lat = np.concatenate(([cur_lat], eval_res["pred_real"][:, 0]))
+        pred_lon = np.concatenate(([cur_lon], eval_res["pred_real"][:, 1]))
     else:
         pred_lat = np.zeros(N_future + 1) + cur_lat 
         pred_lon = np.zeros(N_future + 1) + cur_lon
@@ -423,7 +449,7 @@ def generate_folium_map(plot_data_list, out_dir, args):
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--split_dir", required=True)
-    p.add_argument("--ckpt", required=True)
+    p.add_argument("--ckpt", default=None)
     p.add_argument("--model", required=True)
     p.add_argument("--out_dir", required=True)
     
@@ -461,6 +487,8 @@ def main():
     p.add_argument("--speed_max", type=float, default=30.0)
 
     args = p.parse_args()
+    if args.model.lower() != "kalman" and not args.ckpt:
+        p.error("--ckpt is required unless --model kalman")
     Path(args.out_dir).mkdir(parents=True, exist_ok=True)
 
     files = sorted(glob.glob(os.path.join(args.split_dir, "*_processed.pkl")))
@@ -469,7 +497,14 @@ def main():
         files = [f for f in files if any(os.path.basename(f).startswith(m + "_") for m in target_mmsis)]
 
     feat_dim = 4
-    model, meta = build_model(args.model, args.ckpt, feat_dim, args.horizon)
+    if args.model.lower() == "kalman":
+        model = None
+        meta = {
+            "kalman_params": KalmanFilterParams(),
+            "norm_config": None,
+        }
+    else:
+        model, meta = build_model(args.model, args.ckpt, feat_dim, args.horizon)
     
     # --- Auto-fill DATA bounds from checkpoint ---
     norm_config = meta.get("norm_config")

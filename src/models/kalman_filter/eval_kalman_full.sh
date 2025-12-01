@@ -36,7 +36,7 @@ echo "=================================================="
 
 # --- Run Evaluation ---
 # Note: --n_jobs 4 matches the BSUB -n 4 request
-python -m kalman_filter.baselines.train_kalman \
+python -m src.models.kalman_filter.baselines.train_kalman \
     --final_dir "${TEST_DIR}" \
     --out_dir "${OUT_DIR}" \
     --window 64 \

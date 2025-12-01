@@ -2,7 +2,7 @@
 Train and evaluate Kalman Filter baseline on AIS trajectory data.
 
 Usage:
-    python -m src.baselines.train_kalman --final_dir data/map_reduce_final --window 64 --horizon 12
+    python -m src.models.kalman_filter.baselines.train_kalman --final_dir data/map_reduce_final --window 64 --horizon 12
 """
 
 from __future__ import annotations
@@ -15,11 +15,7 @@ from typing import List, Tuple
 import numpy as np
 from tqdm import tqdm
 
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-
-from kalman_filter.kalman_filter import TrajectoryKalmanFilter, KalmanFilterParams, tune_kalman_filter
+from src.models.kalman_filter.kalman_filter import TrajectoryKalmanFilter, KalmanFilterParams, tune_kalman_filter
 # from src.eval.metrics_traj import ade, fde # Using custom Haversine-based metrics now
 
 

@@ -73,7 +73,7 @@ def main():
     parser = argparse.ArgumentParser(description="Generate a water mask for trajectory plotting using roaring-landmask.")
     parser.add_argument(
         "--output",
-        default="kalman_filter/assets/water_mask.png",
+        default=str(Path(__file__).parent / "assets" / "water_mask.png"),
         help="Path to save the output water mask PNG file."
     )
     args = parser.parse_args()

@@ -5,9 +5,7 @@ Creates comparison plots for trajectory predictions.
 """
 
 from __future__ import annotations
-import sys
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import argparse
 import pickle
@@ -16,7 +14,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
 
-from kalman_filter.kalman_filter import TrajectoryKalmanFilter, KalmanFilterParams
+from src.models.kalman_filter.kalman_filter import TrajectoryKalmanFilter, KalmanFilterParams
 
 
 # Column indices
@@ -387,7 +385,8 @@ def main():
     parser = argparse.ArgumentParser(description="Visualize Kalman Filter predictions")
     parser.add_argument("--final_dir", default="data/map_reduce_final")
     parser.add_argument("--output_dir", default="data/figures/kalman", help="Directory to save visualizations")
-    parser.add_argument("--water_mask", default="kalman_filter/assets/water_mask.png", help="Path to water mask image")
+    default_mask = Path(__file__).resolve().parents[1] / "assets" / "water_mask.png"
+    parser.add_argument("--water_mask", default=str(default_mask), help="Path to water mask image")
     parser.add_argument("--window", type=int, default=64)
     parser.add_argument("--horizon", type=int, default=12)
     parser.add_argument("--n_examples", type=int, default=6)

@@ -7,7 +7,7 @@ Includes:
   downstream scripts.
 
 Usage example:
-    python -m kalman_filter.baselines.train_kalman \
+    python -m src.models.kalman_filter.baselines.train_kalman \
         --final_dir data/map_reduce_final/test --n_jobs -1
 """
 
@@ -16,16 +16,16 @@ import argparse
 import pickle
 import os
 import json
+from dataclasses import dataclass
 import numpy as np
 from pathlib import Path
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional
 from tqdm import tqdm
 from joblib import Parallel, delayed
+import folium
 
-import sys
-sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-
-from kalman_filter.kalman_filter import TrajectoryKalmanFilter, KalmanFilterParams
+from src.models.kalman_filter.kalman_filter import TrajectoryKalmanFilter, KalmanFilterParams
+from src.utils.water_guidance import is_water, project_to_water
 
 # Column indices for normalized trajectories (MapReduce output)
 LAT_IDX, LON_IDX = 0, 1
@@ -36,15 +36,86 @@ LAT_MIN, LAT_MAX = 54.0, 59.0
 LON_MIN, LON_MAX = 5.0, 17.0
 EARTH_RADIUS_M = 6371000.0
 
+@dataclass(frozen=True)
+class Bounds:
+    """Geographic normalization bounds."""
+    lat_min: float
+    lat_max: float
+    lon_min: float
+    lon_max: float
+
+
+DEFAULT_BOUNDS = Bounds(LAT_MIN, LAT_MAX, LON_MIN, LON_MAX)
+
+STYLE = {
+    "past": "#1f77b4",
+    "true": "#2ca02c",
+    "pred": "#d62728",
+}
+
 # --- Metric Helpers ---
-def denormalize(norm_coords: np.ndarray) -> np.ndarray:
-    """Vectorized denormalization: [N, T, 2] -> Real Lat/Lon"""
-    denorm = np.zeros_like(norm_coords)
-    # lat = norm * (max - min) + min
-    denorm[..., 0] = norm_coords[..., 0] * (LAT_MAX - LAT_MIN) + LAT_MIN
-    # lon = norm * (max - min) + min
-    denorm[..., 1] = norm_coords[..., 1] * (LON_MAX - LON_MIN) + LON_MIN
+def normalize(real_coords: np.ndarray, bounds: Optional[Bounds] = None) -> np.ndarray:
+    bounds = bounds or DEFAULT_BOUNDS
+    real_coords = np.asarray(real_coords, dtype=np.float64)
+    if real_coords.size == 0:
+        return np.empty_like(real_coords)
+
+    lat_span = bounds.lat_max - bounds.lat_min
+    lon_span = bounds.lon_max - bounds.lon_min
+
+    norm = np.zeros_like(real_coords, dtype=np.float64)
+    norm[..., 0] = (real_coords[..., 0] - bounds.lat_min) / lat_span
+    norm[..., 1] = (real_coords[..., 1] - bounds.lon_min) / lon_span
+    return norm
+
+def denormalize(norm_coords: np.ndarray, bounds: Optional[Bounds] = None) -> np.ndarray:
+    """Vectorized denormalization: normalized -> real-world lat/lon."""
+    bounds = bounds or DEFAULT_BOUNDS
+    norm_coords = np.asarray(norm_coords, dtype=np.float64)
+    if norm_coords.size == 0:
+        return np.empty_like(norm_coords)
+
+    lat_span = bounds.lat_max - bounds.lat_min
+    lon_span = bounds.lon_max - bounds.lon_min
+
+    denorm = np.zeros_like(norm_coords, dtype=np.float64)
+    denorm[..., 0] = norm_coords[..., 0] * lat_span + bounds.lat_min
+    denorm[..., 1] = norm_coords[..., 1] * lon_span + bounds.lon_min
     return denorm
+
+
+def _anchor_last_water(past_real: np.ndarray) -> Tuple[float, float]:
+    anchor_lat, anchor_lon = float(past_real[-1, 0]), float(past_real[-1, 1])
+    if is_water(anchor_lat, anchor_lon):
+        return anchor_lat, anchor_lon
+
+    for idx in range(len(past_real) - 2, -1, -1):
+        cand_lat, cand_lon = float(past_real[idx, 0]), float(past_real[idx, 1])
+        if is_water(cand_lat, cand_lon):
+            adjusted_lat, adjusted_lon = project_to_water(cand_lat, cand_lon, anchor_lat, anchor_lon)
+            return adjusted_lat, adjusted_lon
+
+    return anchor_lat, anchor_lon
+
+
+def enforce_water_path(past_real: np.ndarray, pred_real: np.ndarray) -> np.ndarray:
+    if pred_real.size == 0:
+        return pred_real
+
+    past_real = np.asarray(past_real, dtype=np.float64)
+    pred_real = np.asarray(pred_real, dtype=np.float64).copy()
+
+    anchor_lat, anchor_lon = _anchor_last_water(past_real)
+
+    for i, (lat, lon) in enumerate(pred_real):
+        lat_f, lon_f = float(lat), float(lon)
+        if not is_water(lat_f, lon_f):
+            lat_f, lon_f = project_to_water(anchor_lat, anchor_lon, lat_f, lon_f)
+        anchor_lat, anchor_lon = lat_f, lon_f
+        pred_real[i, 0] = anchor_lat
+        pred_real[i, 1] = anchor_lon
+
+    return pred_real
 
 def haversine_error(pred: np.ndarray, true: np.ndarray) -> np.ndarray:
     """
@@ -62,6 +133,136 @@ def haversine_error(pred: np.ndarray, true: np.ndarray) -> np.ndarray:
     c = 2 * np.arcsin(np.sqrt(a))
     
     return c * EARTH_RADIUS_M
+
+
+def evaluate_trip_kalman(trip: np.ndarray,
+                         window_size: int,
+                         horizon: int,
+                         kf_params: KalmanFilterParams,
+                         bounds: Optional[Bounds] = None) -> Dict[str, np.ndarray | float]:
+    """Evaluate Kalman filter on a single trajectory segment.
+
+    Parameters
+    ----------
+    trip : np.ndarray
+        Normalized trajectory with lat/lon in the first two columns.
+    window_size : int
+        Number of historical observations used for fitting.
+    horizon : int
+        Prediction horizon (steps ahead) to forecast.
+    kf_params : KalmanFilterParams
+        Kalman filter configuration.
+    bounds : Optional[Bounds]
+        Geographic normalization bounds for denormalization.
+
+    Returns
+    -------
+    Dict[str, np.ndarray | float]
+        Dictionary containing past, prediction, target (denormalized), per-step
+        errors (meters), and ADE/FDE metrics (meters).
+    """
+    if len(trip) < window_size + horizon:
+        raise ValueError("trajectory shorter than window_size + horizon")
+
+    bounds = bounds or DEFAULT_BOUNDS
+
+    history = trip[:window_size]
+    target_norm = trip[window_size:window_size + horizon, LAT_IDX:LON_IDX + 1]
+
+    kf = TrajectoryKalmanFilter(kf_params)
+    pred_norm = kf.predict(history, horizon)
+
+    past_real = denormalize(history[:, LAT_IDX:LON_IDX + 1], bounds)
+    pred_real = denormalize(pred_norm, bounds)
+    pred_real = enforce_water_path(past_real, pred_real)
+    target_real = denormalize(target_norm, bounds)
+
+    pred_norm = normalize(pred_real, bounds)
+
+    errors_m = haversine_error(pred_real, target_real)
+    errors_km = errors_m / 1000.0
+    ade_km = float(np.mean(errors_km))
+    fde_km = float(errors_km[-1])
+
+    return {
+        "past_real": past_real,
+        "pred_real": pred_real,
+        "target_real": target_real,
+        "pred_norm": pred_norm,
+        "target_norm": target_norm,
+        "errors_m": errors_m,
+        "errors_km": errors_km,
+        "ade": ade_km,
+        "fde": fde_km,
+    }
+
+
+def build_folium_map(plot_data: List[Dict[str, np.ndarray | float]], out_dir: Path) -> None:
+    if not plot_data:
+        print("No Folium data available; skipping map generation.")
+        return
+
+    all_lats: List[float] = []
+    all_lons: List[float] = []
+    for entry in plot_data:
+        for segment in (entry["past"], entry["true"], entry["pred"]):
+            all_lats.extend(segment[:, 0])
+            all_lons.extend(segment[:, 1])
+
+    if not all_lats or not all_lons:
+        print("Folium map received empty coordinate arrays; skipping.")
+        return
+
+    lat_center = float(np.mean(all_lats))
+    lon_center = float(np.mean(all_lons))
+
+    fmap = folium.Map(location=[lat_center, lon_center], zoom_start=6, tiles=None)
+
+    folium.TileLayer(
+        tiles="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+        attr="&copy; OpenStreetMap contributors",
+        name="OSM Streets",
+    ).add_to(fmap)
+
+    folium.TileLayer(
+        "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+        attr="Esri World Imagery",
+        name="Esri Satellite",
+    ).add_to(fmap)
+
+    for entry in plot_data:
+        tooltip = f"MMSI: {entry['mmsi']} | ADE: {entry['ade']:.2f} km | FDE: {entry['fde']:.2f} km"
+
+        folium.PolyLine(
+            locations=list(zip(entry["past"][:, 0], entry["past"][:, 1])),
+            color=STYLE["past"],
+            weight=2.5,
+            opacity=0.8,
+            tooltip=tooltip + " (Past)",
+        ).add_to(fmap)
+
+        folium.PolyLine(
+            locations=list(zip(entry["true"][:, 0], entry["true"][:, 1])),
+            color=STYLE["true"],
+            weight=3.0,
+            opacity=0.85,
+            tooltip=tooltip + " (True)",
+        ).add_to(fmap)
+
+        if entry["pred"].shape[0] > 1:
+            folium.PolyLine(
+                locations=list(zip(entry["pred"][:, 0], entry["pred"][:, 1])),
+                color=STYLE["pred"],
+                weight=3.0,
+                opacity=0.9,
+                tooltip=tooltip + " (Pred)",
+            ).add_to(fmap)
+
+    folium.LayerControl().add_to(fmap)
+
+    out_path = out_dir / "kalman_interactive_map.html"
+    fmap.save(out_path)
+    print(f"Folium map saved to: {out_path}")
 
 # --- Core Processing Logic (Pickleable) ---
 def process_trajectory_chunk(trajectories: List[np.ndarray], 
@@ -99,7 +300,9 @@ def process_trajectory_chunk(trajectories: List[np.ndarray],
             pred_norm = kf.predict(input_window, horizon)
             
             # Denormalize
+            past_real = denormalize(input_window[:, LAT_IDX:LON_IDX + 1])
             pred_real = denormalize(pred_norm)
+            pred_real = enforce_water_path(past_real, pred_real)
             target_real = denormalize(target)
             
             # Calc Errors (Meters)
@@ -244,16 +447,18 @@ def evaluate_kalman(kf: TrajectoryKalmanFilter,
 # --- Main Pipeline ---
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--final_dir", required=True)
+    parser.add_argument("--split_dir", "--final_dir", dest="split_dir", required=True)
     parser.add_argument("--out_dir", default="results/baselines")
     parser.add_argument("--window", type=int, default=64)
     parser.add_argument("--horizon", type=int, default=12) # 12 * 5mins = 1 Hour
     parser.add_argument("--n_jobs", type=int, default=-1, help="Num CPU cores")
     parser.add_argument("--max_files", type=int, default=None)
+    parser.add_argument("--folium", action="store_true", help="Generate interactive Folium map")
+    parser.add_argument("--folium_max", type=int, default=None, help="Limit number of trajectories plotted in the Folium map")
     args = parser.parse_args()
     
     # 1. Load Data
-    all_trajs = load_trajectories(args.final_dir, args.max_files)
+    all_trajs = load_trajectories(args.split_dir, args.max_files)
 
     if not all_trajs:
         print("No trajectories loaded. Exiting.")
@@ -331,6 +536,45 @@ def main():
             "fde": final_fde, 
             "steps": final_horizon_ade.tolist()
         }, f, indent=2)
+
+    if args.folium:
+        print("\nPreparing Folium visualization...")
+        folium_entries: List[Dict[str, np.ndarray | float]] = []
+        for idx, traj in enumerate(test_trajs):
+            if len(traj) < args.window + args.horizon:
+                continue
+
+            mmsi = int(traj[0, 8]) if traj.shape[1] > 8 else idx
+            slice_len = args.window + args.horizon
+            trip_slice = traj[:slice_len]
+            eval_result = evaluate_trip_kalman(
+                trip_slice,
+                window_size=args.window,
+                horizon=args.horizon,
+                kf_params=params,
+                bounds=DEFAULT_BOUNDS,
+            )
+
+            past = eval_result["past_real"]
+            true_future = eval_result["target_real"]
+            pred_future = eval_result["pred_real"]
+
+            true_cont = np.vstack([past[-1:], true_future]) if len(true_future) > 0 else past[-1:]
+            pred_cont = np.vstack([past[-1:], pred_future]) if len(pred_future) > 0 else past[-1:]
+
+            folium_entries.append({
+                "mmsi": mmsi,
+                "ade": eval_result["ade"],
+                "fde": eval_result["fde"],
+                "past": past,
+                "true": true_cont,
+                "pred": pred_cont,
+            })
+
+            if args.folium_max and len(folium_entries) >= args.folium_max:
+                break
+
+        build_folium_map(folium_entries, Path(args.out_dir))
 
 if __name__ == "__main__":
     main()

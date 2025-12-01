@@ -27,7 +27,7 @@ mkdir -p logs
 # --- Run Visualization ---
 # This script generates the high-quality, zoomed-in plots for the final 3-hour evaluation.
 echo "Running visualization script for final 3-hour horizon plots..."
-python -m kalman_filter.baselines.visualize_kalman \
+python -m src.models.kalman_filter.baselines.visualize_kalman \
     --final_dir /dtu/blackhole/10/178320/preprocessed_1/final/test \
     --output_dir data/figures/kalman_final_3h \
     --horizon 12 \

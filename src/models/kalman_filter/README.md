@@ -23,13 +23,13 @@ This is the main script for running the final evaluation on the test set.
 
 - **What it does**:
     1.  Sets up the Python environment.
-    2.  Runs `kalman_filter/baselines/train_kalman.py` on the full test dataset located at `/dtu/blackhole/10/178320/preprocessed_1/final/test`.
+    2.  Runs `src/models/kalman_filter/baselines/train_kalman.py` on the full test dataset located at `/dtu/blackhole/10/178320/preprocessed_1/final/test`.
     3.  Uses a prediction horizon of 3 hours (`--horizon 36`).
-    4.  The Python script evaluates the predictions and calculates Haversine ADE/FDE, saving the results to a JSON file in the `kalman_filter/` directory.
+    4.  The Python script evaluates the predictions and calculates Haversine ADE/FDE, saving the results to a JSON file in the `src/models/kalman_filter/` directory.
 
 - **How to run**:
   ```bash
-  bsub < kalman_filter/eval_kalman_full.sh
+  bsub < src/models/kalman_filter/eval_kalman_full.sh
   ```
 
 ### 2. Visualization (`visualize_kalman.sh`)
@@ -38,9 +38,9 @@ This script generates the trajectory plots.
 
 - **What it does**:
     1.  Sets up the Python environment.
-    2.  **Builds Water Mask**: Runs `kalman_filter/build_water_mask.py` to create a `water_mask.png` file using the `roaring-landmask` library. This provides a fallback map background and requires no manual downloads.
-    3.  **Generates Plots**: Runs `kalman_filter/baselines/visualize_kalman.py` to predict trajectories from the test set and plot them over a map background.
-    4.  Saves the output `.png` files to `kalman_filter/visualizations/`.
+    2.  **Builds Water Mask**: Runs `src/models/kalman_filter/build_water_mask.py` to create a `water_mask.png` file using the `roaring-landmask` library. This provides a fallback map background and requires no manual downloads.
+    3.  **Generates Plots**: Runs `src/models/kalman_filter/baselines/visualize_kalman.py` to predict trajectories from the test set and plot them over a map background.
+    4.  Saves the output `.png` files to `src/models/kalman_filter/visualizations/`.
 
 - **How to run**:
   ```bash
@@ -48,14 +48,14 @@ This script generates the trajectory plots.
   # pip install roaring-landmask
 
   # Then, submit the job
-  bsub < kalman_filter/visualize_kalman.sh
+  bsub < src/models/kalman_filter/visualize_kalman.sh
   ```
 
 ---
 
 ## ⚙️ Noise Parameters
 
-The filter uses fixed, untuned noise parameters defined in `kalman_filter/kalman_filter.py`:
+The filter uses fixed, untuned noise parameters defined in `src/models/kalman_filter/kalman_filter.py`:
 
 - **`R` (Measurement Noise)**: `1e-5` for latitude and longitude, representing sensor inaccuracy.
 - **`Q` (Process Noise)**: `1e-4` for position and velocity components, accounting for unmodeled dynamics like turns and speed changes.
@@ -69,7 +69,7 @@ While tuning these parameters could improve performance, the current implementat
 ### 6. **Batch Prediction (All Test Windows)**
 ```python
 # Method: kf.predict_batch()
-# Location: kalman_filter/kalman_filter.py
+# Location: src/models/kalman_filter/kalman_filter.py
 ```
 - **Input:** All test windows `X_test (73482, 64, 9)`
 - **Process:**
@@ -85,7 +85,7 @@ While tuning these parameters could improve performance, the current implementat
 ### 7. **Compute Metrics**
 ```python
 # Function: evaluate_kalman()
-# Location: kalman_filter/baselines/train_kalman.py
+# Location: src/models/kalman_filter/baselines/train_kalman.py
 ```
 - **Input:** Predictions `(N, 12, 2)`, Ground truth `Y (N, 12, 2)`
 - **Process:**
@@ -115,7 +115,7 @@ While tuning these parameters could improve performance, the current implementat
 ### 8. **Save Results**
 ```python
 # Function: main() - end section
-# Location: kalman_filter/baselines/train_kalman.py
+# Location: src/models/kalman_filter/baselines/train_kalman.py
 ```
 - **Process:**
   - **JSON file** (`metrics/kalman_filter.json`):
@@ -136,7 +136,7 @@ While tuning these parameters could improve performance, the current implementat
 
 ```bash
 # Command on HPC
-bsub < kalman_filter/eval_kalman_full.sh
+bsub < src/models/kalman_filter/eval_kalman_full.sh
 ```
 
 **What happens:**
@@ -161,19 +161,19 @@ bsub < kalman_filter/eval_kalman_full.sh
 ## 📁 Folder Structure
 
 ```
-kalman_filter/
+src/models/kalman_filter/
 ├── README.md                      # This file
-├── kalman_filter.py              # Core Kalman Filter implementation
+├── kalman_filter.py               # Core Kalman Filter implementation
 ├── baselines/                     # Training, evaluation, and analysis scripts
-│   ├── train_kalman.py           # Main training/evaluation script
-│   ├── test_kalman.py            # Unit tests
-│   ├── compare_models.py         # Compare with neural networks
-│   ├── visualize_kalman.py       # Generate plots
-│   └── README_KALMAN.md          # Technical documentation
-├── eval_kalman.sh                # Quick evaluation script
-├── eval_kalman_full.sh           # HPC job: Full evaluation
-├── preprocess_mapreduce.sh       # HPC job: Data preprocessing
-└── tune_kalman.sh                # HPC job: Hyperparameter tuning
+│   ├── train_kalman.py            # Main training/evaluation script
+│   ├── test_kalman.py             # Unit tests
+│   ├── compare_models.py          # Compare with neural networks
+│   ├── visualize_kalman.py        # Generate plots
+│   └── README_KALMAN.md           # Technical documentation
+├── eval_kalman.sh                 # Quick evaluation script
+├── eval_kalman_full.sh            # HPC job: Full evaluation
+├── preprocess_mapreduce.sh        # HPC job: Data preprocessing
+└── tune_kalman.sh                 # HPC job: Hyperparameter tuning
 ```
 
 ---
@@ -185,7 +185,7 @@ kalman_filter/
 cd /path/to/AIS-MDA
 
 # Run on local data
-bash kalman_filter/eval_kalman.sh data/map_reduce_final 64 12
+bash src/models/kalman_filter/eval_kalman.sh data/map_reduce_final 64 12
 ```
 
 ### HPC Evaluation (Full Dataset)
@@ -200,8 +200,8 @@ pip install -r env/requirements.txt
 
 **Step 2: Update data path in job script**
 ```bash
-# Edit kalman_filter/eval_kalman_full.sh
-nano kalman_filter/eval_kalman_full.sh
+# Edit src/models/kalman_filter/eval_kalman_full.sh
+nano src/models/kalman_filter/eval_kalman_full.sh
 
 # Change this line:
 FINAL_DIR="/dtu/blackhole/10/178320/preprocessed_test"  # Your path
@@ -209,7 +209,7 @@ FINAL_DIR="/dtu/blackhole/10/178320/preprocessed_test"  # Your path
 
 **Step 3: Submit job**
 ```bash
-bsub < kalman_filter/eval_kalman_full.sh
+bsub < src/models/kalman_filter/eval_kalman_full.sh
 ```
 
 **Step 4: Monitor progress**
@@ -266,7 +266,7 @@ For Denmark AIS data (5-minute sampling):
 
 **`eval_kalman.sh`** - Quick evaluation
 ```bash
-bash kalman_filter/eval_kalman.sh <data_dir> <window> <horizon>
+bash src/models/kalman_filter/eval_kalman.sh <data_dir> <window> <horizon>
 ```
 
 ### HPC Job Scripts
@@ -303,17 +303,17 @@ bash kalman_filter/eval_kalman.sh <data_dir> <window> <horizon>
 ### Import in Python Scripts
 ```python
 # From anywhere in the repo
-from kalman_filter.kalman_filter import TrajectoryKalmanFilter, KalmanFilterParams
+from src.models.kalman_filter.kalman_filter import TrajectoryKalmanFilter, KalmanFilterParams
 
 # Or use the baselines module
-from kalman_filter.baselines.train_kalman import load_trajectories, evaluate_kalman
+from src.models.kalman_filter.baselines.train_kalman import load_trajectories, evaluate_kalman
 ```
 
 ### Use in Notebooks
 ```python
 import sys
 sys.path.append('..')  # If in notebooks/
-from kalman_filter.kalman_filter import TrajectoryKalmanFilter
+from src.models.kalman_filter.kalman_filter import TrajectoryKalmanFilter
 
 kf = TrajectoryKalmanFilter()
 predictions = kf.predict(window, horizon=12)
@@ -342,10 +342,10 @@ Make sure paths are updated in the job scripts to match your HPC directory struc
 
 ```bash
 # Local evaluation
-bash kalman_filter/eval_kalman.sh data/map_reduce_final 64 12
+bash src/models/kalman_filter/eval_kalman.sh data/map_reduce_final 64 12
 
 # HPC submission
-bsub < kalman_filter/eval_kalman_full.sh
+bsub < src/models/kalman_filter/eval_kalman_full.sh
 
 # Check HPC job status
 bstat
