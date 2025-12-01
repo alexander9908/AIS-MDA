@@ -1,0 +1,10 @@
+Loaded dependency [python3/3.13.2]: sqlite3/3.49.0
+Loaded dependency [python3/3.13.2]: gcc/12.4.0-binutils-2.42
+Loaded module: python3/3.13.2
+
+Switching from python3/3.13.2 to python3/3.13.2
+  Loading requirement: sqlite3/3.49.0 gcc/12.4.0-binutils-2.42
+/usr/lib64/python3.9/runpy.py:127: RuntimeWarning: 'kalman_filter.baselines.train_kalman' found in sys.modules after import of package 'kalman_filter.baselines', but prior to execution of 'kalman_filter.baselines.train_kalman'; this may result in unpredictable behaviour
+  warn(RuntimeWarning(msg))
+  0%|          | 0/1270 [00:00<?, ?it/s] 17%|█▋        | 214/1270 [00:00<00:00, 2130.03it/s] 34%|███▎      | 428/1270 [00:00<00:00, 2020.09it/s] 50%|████▉     | 631/1270 [00:00<00:00, 1981.46it/s] 66%|██████▌   | 835/1270 [00:00<00:00, 1999.22it/s] 82%|████████▏ | 1036/1270 [00:00<00:00, 1993.38it/s] 97%|█████████▋| 1236/1270 [00:00<00:00, 1985.54it/s]100%|██████████| 1270/1270 [00:00<00:00, 1996.38it/s]
+  0%|          | 0/9 [00:00<?, ?it/s]100%|██████████| 9/9 [00:00<00:00, 93.03it/s]
