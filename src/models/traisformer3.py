@@ -125,13 +125,16 @@ class TrAISformer(nn.Module):
         return loss
 
     @torch.no_grad()
-    def generate(self, past_idxs, L, sampling="sample", temperature=1.0, top_k=20):
+    def generate(self, past_idxs, L, sampling="sample", temperature=1.0, top_k=20, local_window=None, prevent_stuck=False):
         self.eval()
         device = next(self.parameters()).device
         e_past = self._embed(past_idxs)
         z_past = self.posenc(self.in_proj(e_past))
         curr_seq = self.start_token.expand(z_past.size(0), 1, -1)
         out = {k: [] for k in ["lat", "lon", "sog", "cog"]}
+        
+        # Track last indices for continuity
+        last_idxs = {k: past_idxs[k][:, -1] for k in ["lat", "lon", "sog", "cog"]}
         
         for _ in range(L):
             curr_in = self.posenc(curr_seq)
@@ -142,6 +145,33 @@ class TrAISformer(nn.Module):
             next_vals = {}
             for key, head in zip(["lat", "lon", "sog", "cog"], [self.head_lat, self.head_lon, self.head_sog, self.head_cog]):
                 logits = head(last_step)
+                
+                # --- Continuity Constraint ---
+                if local_window is not None and key in ["lat", "lon"]:
+                    # Create a mask for [prev - window, prev + window]
+                    n_bins = logits.size(-1)
+                    mask = torch.full_like(logits, -float('Inf'))
+                    
+                    # Vectorized mask creation
+                    indices = torch.arange(n_bins, device=device).unsqueeze(0)
+                    centers = last_idxs[key].unsqueeze(1)
+                    dist = (indices - centers).abs()
+                    
+                    logits = torch.where(dist <= local_window, logits, mask)
+
+                    # --- Prevent Stuck Logic ---
+                    if prevent_stuck:
+                        # If SOG is high (> 5 knots approx, bin 10), force movement
+                        # This prevents the model from predicting "stay" repeatedly when moving fast
+                        # Assuming bin 0-60 for 0-30 knots (0.5 knots/bin)
+                        # Threshold: Bin 10 = 5 knots.
+                        sog_threshold = 10 
+                        is_moving = (last_idxs['sog'] > sog_threshold).unsqueeze(1)
+                        is_stay = (indices == centers)
+                        
+                        # If moving and trying to stay, mask the stay option
+                        logits = torch.where(is_moving & is_stay, torch.tensor(-float('Inf'), device=device), logits)
+
                 if top_k > 0:
                     v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
                     logits[logits < v[:, [-1]]] = -float('Inf')
@@ -151,8 +181,10 @@ class TrAISformer(nn.Module):
                 else:
                     probs = F.softmax(logits / temperature, dim=-1)
                     token = torch.multinomial(probs, 1).squeeze(-1)
+                
                 next_vals[key] = token
                 out[key].append(token)
+                last_idxs[key] = token # Update for next step
             
             next_embed = self._embed({k: v.unsqueeze(1) for k, v in next_vals.items()})
             next_z = self.in_proj(next_embed)

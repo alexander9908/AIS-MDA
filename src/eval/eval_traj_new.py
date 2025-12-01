@@ -1,4 +1,4 @@
-# src/eval/eval_traj.py
+# src/eval/eval_traj_new.py
 from __future__ import annotations
 import matplotlib
 matplotlib.use('Agg') 
@@ -18,29 +18,10 @@ import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 
 # ---------------- Models ----------------
-from src.models.traisformer1 import TrAISformer, BinSpec
-<<<<<<< HEAD
-from src.models.tptrans_V2 import TPTrans
+# Using TrAISformer from your traisformer2.py structure
+from src.models.traisformer3 import TrAISformer, BinSpec # Assuming you saved the new class here
+from src.models.tptrans_V3 import TPTrans
 
-# try:
-#     from src.models.tptrans_V2 import TPTrans
-# except ImportError:
-#     # Try importing V3 if V2 fails or is replaced
-#     try:
-#         from src.models.tptrans_V3 import TPTrans
-#     except ImportError:
-#         print("[Warning] Could not import TPTrans, falling back to basic definition")
-#         from src.models.tptrans import TPTrans
-=======
-try:
-    from src.models.tptrans_V2 import TPTrans
-except ImportError:
-    try:
-        from src.models.tptrans_V3 import TPTrans
-    except ImportError:
-        print("[Warning] Could not import TPTrans, falling back to basic definition")
-        from src.models.tptrans import TPTrans
->>>>>>> fc149b2e73bd073cde2c2bd2527dd6a5cc08eb23
 
 # ---------------- Water mask ----------------
 from src.utils.water_guidance import is_water, project_to_water
@@ -134,6 +115,7 @@ def build_model(kind: str, ckpt: str, feat_dim: int, horizon: int):
     meta = {
         "scale_factor": sd_top.get("scale_factor", 100.0), 
         "norm_config": sd_top.get("norm_config", None),
+        "data_bounds": sd_top.get("data_bounds", None),
         "bins": None
     }
 
@@ -170,28 +152,30 @@ def build_model(kind: str, ckpt: str, feat_dim: int, horizon: int):
     if kind.lower() == "traisformer":
         bins = load_bins_from_ckpt(sd_top)
         meta["bins"] = bins
-        d_model = sd_top.get("d_model", 512)
-        nhead = sd_top.get("nhead", 8)
-        num_layers = sd_top.get("num_layers", 8)
-        dropout = sd_top.get("dropout", 0.1)
         
-        # --- CRITICAL FIX: use_water_mask=False ---
-        # We disable the internal mask to prevent "All Land" detection errors
-        # which cause the model to default to index 0 (Bottom-Left).
-        # We perform Ray-Casting Water masking externally in the eval loop instead.
-        model = TrAISformer(bins=bins, d_model=d_model, nhead=nhead, num_layers=num_layers, dropout=dropout, use_water_mask=False)
+        # Try to load config from checkpoint
+        cfg = sd_top.get("config", {})
+        model_cfg = cfg.get("model", {})
+        
+        d_model = model_cfg.get("d_model", sd_top.get("d_model", 512))
+        nhead = model_cfg.get("nhead", sd_top.get("nhead", 8))
+        num_layers = model_cfg.get("num_layers", sd_top.get("num_layers", 8))
+        dropout = model_cfg.get("dropout", sd_top.get("dropout", 0.1))
+        
+        emb_lat = model_cfg.get("emb_lat", 128)
+        emb_lon = model_cfg.get("emb_lon", 128)
+        emb_sog = model_cfg.get("emb_sog", 64)
+        emb_cog = model_cfg.get("emb_cog", 64)
+        
+        print(f"[Model] TrAISformer Config: d_model={d_model}, nhead={nhead}, layers={num_layers}")
+        
+        model = TrAISformer(bins=bins, d_model=d_model, nhead=nhead, num_layers=num_layers, dropout=dropout,
+                            emb_lat=emb_lat, emb_lon=emb_lon, emb_sog=emb_sog, emb_cog=emb_cog)
         model.load_state_dict(clean_sd, strict=False)
-        
-        # --- FIX: Disable restrictive sampling heuristics ---
-        # first_step_neigh=True forces the first step to be within 1 bin of the start.
-        # With high-res bins and 5-min steps, a ship can easily move >1 bin.
-        # forbid_same_cell=True forces movement, which is bad for stationary ships.
-        model.set_sampler(first_step_neigh=False, forbid_same_cell=False)
         
         print("-" * 40)
         print(f"[Model] TrAISformer Loaded.")
         print(f"        Internal Bins: Lat[{bins.lat_min}:{bins.lat_max}] Lon[{bins.lon_min}:{bins.lon_max}]")
-        print(f"        Internal Water Mask: DISABLED (Using external Ray-Casting)")
         print("-" * 40)
         return model, meta
         
@@ -238,6 +222,7 @@ def evaluate_and_plot_trip(fpath: str, trip: np.ndarray, model, meta, args, samp
     raw_lons_future = full_lon_deg[cut:cut+N_future]
     lats_true_plot = np.concatenate(([cur_lat], raw_lats_future))
     lons_true_plot = np.concatenate(([cur_lon], raw_lons_future))
+    
     lats_true_eval = raw_lats_future
     lons_true_eval = raw_lons_future
 
@@ -251,10 +236,16 @@ def evaluate_and_plot_trip(fpath: str, trip: np.ndarray, model, meta, args, samp
 
     if args.model.lower() == "traisformer":
         # --- TRAISFORMER ---
-        past_lat = full_lat_deg[:cut]
-        past_lon = full_lon_deg[:cut]
-        past_sog = full_sog_kn[:cut]
-        past_cog = full_cog_deg[:cut]
+        # Truncate to past_len to match training window
+        if len(full_lat_deg[:cut]) > args.past_len:
+            start_idx = cut - args.past_len
+        else:
+            start_idx = 0
+            
+        past_lat = full_lat_deg[start_idx:cut]
+        past_lon = full_lon_deg[start_idx:cut]
+        past_sog = full_sog_kn[start_idx:cut]
+        past_cog = full_cog_deg[start_idx:cut]
         
         past_idxs = {
             "lat": model.bins.lat_to_bin(torch.from_numpy(past_lat).float()).unsqueeze(0).to(device),
@@ -263,25 +254,68 @@ def evaluate_and_plot_trip(fpath: str, trip: np.ndarray, model, meta, args, samp
             "cog": model.bins.cog_to_bin(torch.from_numpy(past_cog).float()).unsqueeze(0).to(device),
         }
         
+        if sample_idx == 0:
+            print(f"[DEBUG] Trip {mmsi} Past Lat Range: {past_lat.min():.4f} - {past_lat.max():.4f}")
+            print(f"[DEBUG] Trip {mmsi} Past Lon Range: {past_lon.min():.4f} - {past_lon.max():.4f}")
+            print(f"[DEBUG] Trip {mmsi} Past Lat Idxs: {past_idxs['lat'].cpu().numpy()}")
+        
         n_samples = max(1, args.samples)
         for s in range(n_samples):
-            with torch.no_grad():
-                out_idxs = model.generate(
-                    past_idxs, 
-                    L=N_future, 
-                    sampling="sample" if args.temperature > 0 else "greedy",
-                    temperature=args.temperature,
-                    top_k=args.top_k
-                )
+            # SLIDING WINDOW GENERATION
+            all_pred_idxs = {k: [] for k in ["lat", "lon", "sog", "cog"]}
+            curr_past_idxs = {k: v.clone() for k, v in past_idxs.items()}
+            
+            steps_generated = 0
+            chunk_size = args.horizon # Use the training horizon as chunk size
+            
+            while steps_generated < N_future:
+                step_len = min(chunk_size, N_future - steps_generated)
+                
+                with torch.no_grad():
+                    # Generate next chunk
+                    chunk_out = model.generate(
+                        curr_past_idxs, 
+                        L=step_len, 
+                        sampling="sample" if args.temperature > 0 else "greedy",
+                        temperature=args.temperature,
+                        top_k=args.top_k,
+                        local_window=args.local_window,
+                        prevent_stuck=args.prevent_stuck
+                    )
+                
+                # Append to results
+                for k in all_pred_idxs:
+                    all_pred_idxs[k].append(chunk_out[k])
+                
+                # Update past for next iteration
+                # chunk_out[k] is [B, step_len]
+                # curr_past_idxs[k] is [B, past_len]
+                # We want to slide: remove first step_len, append new step_len
+                for k in curr_past_idxs:
+                    # Concatenate along time dim (1)
+                    new_past = torch.cat([curr_past_idxs[k], chunk_out[k]], dim=1)
+                    # Keep only the last past_len
+                    curr_past_idxs[k] = new_past[:, -args.past_len:]
+                
+                steps_generated += step_len
+            
+            # Concatenate all chunks
+            out_idxs = {k: torch.cat(v, dim=1) for k, v in all_pred_idxs.items()}
             
             # Decode to degrees
             pred_lats_deg = model.bins.bin_to_lat_mid(out_idxs["lat"].flatten().cpu()).numpy()
             pred_lons_deg = model.bins.bin_to_lon_mid(out_idxs["lon"].flatten().cpu()).numpy()
             
+            if sample_idx < 3:
+                print(f"[DEBUG] Trip {mmsi} Pred Lat Idxs: {out_idxs['lat'].flatten().cpu().numpy()}")
+                print(f"[DEBUG] Trip {mmsi} Pred Lon Idxs: {out_idxs['lon'].flatten().cpu().numpy()}")
+                print(f"[DEBUG] Trip {mmsi} Pred SOG Idxs: {out_idxs['sog'].flatten().cpu().numpy()}")
+            
             # Apply External Water Mask (Ray Casting)
             fixed_lats, fixed_lons = [], []
             curr_l, curr_o = cur_lat, cur_lon
             
+            water_fix_count = 0
             for k in range(len(pred_lats_deg)):
                 cand_l, cand_o = float(pred_lats_deg[k]), float(pred_lons_deg[k])
                 is_safe, _ = is_path_safe(curr_l, curr_o, cand_l, cand_o, steps=5)
@@ -290,10 +324,14 @@ def evaluate_and_plot_trip(fpath: str, trip: np.ndarray, model, meta, args, samp
                     fix_l, fix_o = cand_l, cand_o
                 else:
                     fix_l, fix_o = project_to_water(curr_l, curr_o, cand_l, cand_o)
+                    water_fix_count += 1
                 
                 fixed_lats.append(fix_l)
                 fixed_lons.append(fix_o)
                 curr_l, curr_o = fix_l, fix_o
+            
+            if sample_idx < 3 and water_fix_count > 0:
+                print(f"[DEBUG] Trip {mmsi} Water Fixes: {water_fix_count}/{len(pred_lats_deg)}")
                 
             pred_lats_deg = np.array(fixed_lats)
             pred_lons_deg = np.array(fixed_lons)
@@ -512,6 +550,8 @@ def main():
     p.add_argument("--cpu", action="store_true")
     p.add_argument("--mmsi", default="") 
     p.add_argument("--speed_max", type=float, default=30.0)
+    p.add_argument("--local_window", type=int, default=10, help="Constrain prediction to +/- bins")
+    p.add_argument("--prevent_stuck", action="store_true", help="Force movement if SOG is high")
 
     args = p.parse_args()
     Path(args.out_dir).mkdir(parents=True, exist_ok=True)
@@ -526,7 +566,16 @@ def main():
     
     # Auto-fill DATA bounds
     norm_config = meta.get("norm_config")
-    if norm_config:
+    data_bounds = meta.get("data_bounds")
+    
+    if data_bounds:
+        print(f"[DEBUG] Loading DATA BOUNDS from checkpoint: {data_bounds}")
+        if args.lat_min is None: args.lat_min = data_bounds.get("LAT_MIN")
+        if args.lat_max is None: args.lat_max = data_bounds.get("LAT_MAX")
+        if args.lon_min is None: args.lon_min = data_bounds.get("LON_MIN")
+        if args.lon_max is None: args.lon_max = data_bounds.get("LON_MAX")
+        if "SOG_MAX" in data_bounds: args.speed_max = data_bounds.get("SOG_MAX")
+    elif norm_config:
         if args.lat_min is None: args.lat_min = norm_config.get("LAT_MIN")
         if args.lat_max is None: args.lat_max = norm_config.get("LAT_MAX")
         if args.lon_min is None: args.lon_min = norm_config.get("LON_MIN")
