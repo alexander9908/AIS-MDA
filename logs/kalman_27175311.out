@@ -1,0 +1,120 @@
+==================================================
+Starting Kalman Filter Baseline Evaluation
+Test Data: /dtu/blackhole/10/178320/preprocessed_1/final/test
+Output Dir: data/checkpoints
+Cores: 4
+==================================================
+Loading 1270 files from /dtu/blackhole/10/178320/preprocessed_1/final/test...
+Evaluated on Test Set: 127 trajectories
+Starting Parallel Evaluation on 8 cores...
+
+==============================
+KALMAN FILTER BASELINE RESULTS
+Straight Line (CV) Model
+==============================
+Samples Evaluated: 13669
+ADE (Mean Error):  1545.05 meters
+FDE (Final Error): 3499.36 meters
+------------------------------
+Error per Time Step (meters):
+  T+1 (5 min): 86.21m
+  T+2 (10 min): 230.54m
+  T+3 (15 min): 425.25m
+  T+4 (20 min): 661.89m
+  T+5 (25 min): 932.58m
+  T+6 (30 min): 1232.39m
+  T+7 (35 min): 1557.55m
+  T+8 (40 min): 1905.56m
+  T+9 (45 min): 2274.06m
+  T+10 (50 min): 2663.39m
+  T+11 (55 min): 3071.81m
+  T+12 (60 min): 3499.36m
+Job completed at Tue Nov 25 15:48:39 CET 2025
+
+------------------------------------------------------------
+Sender: LSF System <lsfadmin@hpc.dtu.dk>
+Subject: Job 27175311: <kalman_test> in cluster <dcc> Done
+
+Job <kalman_test> was submitted from host <gbarlogin1> by user <s221710> in cluster <dcc> at Tue Nov 25 15:48:24 2025
+Job was executed on host(s) <4*n-62-30-25>, in queue <hpc>, as user <s221710> in cluster <dcc> at Tue Nov 25 15:48:26 2025
+</zhome/f5/1/178320> was used as the home directory.
+</zhome/f5/1/178320/AIS-MDA> was used as the working directory.
+Started at Tue Nov 25 15:48:26 2025
+Terminated at Tue Nov 25 15:48:51 2025
+Results reported at Tue Nov 25 15:48:51 2025
+
+Your job looked like:
+
+------------------------------------------------------------
+# LSBATCH: User input
+#!/bin/sh
+
+### Job Name:
+#BSUB -J kalman_test
+
+### Queue Name:
+#BSUB -q hpc
+
+### Resource Request:
+# 4 cores is sufficient for the parallel joblib execution
+#BSUB -n 4
+#BSUB -R "span[hosts=1]"
+#BSUB -R "rusage[mem=8GB]"
+#BSUB -W 4:00
+
+### Output files
+#BSUB -o logs/kalman_%J.out
+#BSUB -e logs/kalman_%J.err
+
+# --- Setup Environment ---
+cd ~/AIS-MDA
+module swap python3/3.13.2
+source .venv/bin/activate
+
+# --- Define Paths ---
+# Using the TEST directory specifically
+TEST_DIR="/dtu/blackhole/10/178320/preprocessed_1/final/test"
+OUT_DIR="data/checkpoints"
+
+echo "=================================================="
+echo "Starting Kalman Filter Baseline Evaluation"
+echo "Test Data: $TEST_DIR"
+echo "Output Dir: $OUT_DIR"
+echo "Cores: 4"
+echo "=================================================="
+
+# --- Run Evaluation ---
+# Note: --n_jobs 4 matches the BSUB -n 4 request
+python -m kalman_filter.baselines.train_kalman \
+    --final_dir "${TEST_DIR}" \
+    --out_dir "${OUT_DIR}" \
+    --window 64 \
+    --horizon 12 \
+    --n_jobs 8
+
+echo "Job completed at $(date)"
+------------------------------------------------------------
+
+Successfully completed.
+
+Resource usage summary:
+
+    CPU time :                                   38.06 sec.
+    Max Memory :                                 249 MB
+    Average Memory :                             98.33 MB
+    Total Requested Memory :                     32768.00 MB
+    Delta Memory :                               32519.00 MB
+    Max Swap :                                   -
+    Max Processes :                              14
+    Max Threads :                                18
+    Run time :                                   69 sec.
+    Turnaround time :                            27 sec.
+
+The output (if any) is above this job summary.
+
+
+
+PS:
+
+Read file <logs/kalman_27175311.err> for stderr output of this job.
+
