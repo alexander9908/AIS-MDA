@@ -10,19 +10,19 @@ import torch
 import matplotlib.pyplot as plt
 
 # ---------------- Models ----------------
-from src.models.traisformer1 import TrAISformer, BinSpec
+from src.models.traisformer_old import TrAISformer, BinSpec
 # Use V2 as requested
 try:
-    from src.models.tptrans_V2 import TPTrans
+    from src.models.tptrans_gru import TPTrans
 except ImportError:
     print("[Warning] Could not import TPTrans from src.models.tptrans_V2, falling back to src.models.tptrans")
-    from src.models.tptrans import TPTrans
+    from src.models.legacy.tptrans import TPTrans
 
 # ---------------- Preprocessing ----------------
 from src.preprocessing.preprocessing import de_normalize_track, LAT_MIN, LAT_MAX, LON_MIN, LON_MAX, SPEED_MAX
 
 # ---------------- Water mask (background only) ----------------
-from src.eval.build_water_mask import make_water_mask
+from src.utils.build_water_mask import make_water_mask
 
 # Water guidance used for TPTrans rollout (project predictions to water)
 from src.utils.water_guidance import is_water, project_to_water

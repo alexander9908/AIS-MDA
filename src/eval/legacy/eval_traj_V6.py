@@ -9,11 +9,11 @@ import matplotlib.pyplot as plt
 
 # ---------------- Models ----------------
 # Adjust these imports to your tree if paths differ.
-from src.models.traisformer1 import TrAISformer, BinSpec
-from src.models.tptrans import TPTrans
+from src.models.traisformer_old import TrAISformer, BinSpec
+from src.models.legacy.tptrans import TPTrans
 
 # ---------------- Water mask (background only) ----------------
-from src.eval.build_water_mask import make_water_mask
+from src.utils.build_water_mask import make_water_mask
 
 # Water guidance used for TPTrans rollout (project predictions to water)
 from src.utils.water_guidance import is_water, project_to_water

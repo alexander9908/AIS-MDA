@@ -8,7 +8,7 @@ from multiprocessing import cpu_count
 import os
 
 from ..config import load_config
-from ..models.traisformer3 import TrAISformer, BinSpec
+from ..models.traisformer import TrAISformer, BinSpec
 from ..utils.datasets_V5 import make_ais_dataset
 from ..utils.logging import CustomLogger
 

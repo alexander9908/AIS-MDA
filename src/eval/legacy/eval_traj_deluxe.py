@@ -14,12 +14,12 @@ import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 
 # ---------------- Models ----------------
-from src.models.traisformer1 import TrAISformer, BinSpec
+from src.models.traisformer_old import TrAISformer, BinSpec
 try:
-    from src.models.tptrans_V2 import TPTrans
+    from src.models.tptrans_gru import TPTrans
 except ImportError:
     print("[Warning] Could not import TPTrans from src.models.tptrans_V2, falling back to src.models.tptrans")
-    from src.models.tptrans import TPTrans
+    from src.models.legacy.tptrans import TPTrans
 
 # ---------------- Preprocessing ----------------
 from src.preprocessing.preprocessing import de_normalize_track, LAT_MIN, LAT_MAX, LON_MIN, LON_MAX, SPEED_MAX
