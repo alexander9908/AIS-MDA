@@ -1,12 +1,7 @@
 task: trajectory
 
-<<<<<<< HEAD
-processed_dir: /dtu/blackhole/10/178320/preprocessed_2/final/
-out_dir: data/checkpoints/traisformer_hpc_new_small/ #traisformer_full/
-=======
 processed_dir: data/map_reduced/ # /dtu/blackhole/10/178320/preprocessed_1/final/
 out_dir: data/checkpoints/traisformer_test_new/ #traisformer_full/
->>>>>>> fc149b2e73bd073cde2c2bd2527dd6a5cc08eb23
 window: 64
 horizon: 12
 start_mode: kmeans  # set to "kmeans" to enable centroid-based starting points
