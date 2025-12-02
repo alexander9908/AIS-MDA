@@ -1,6 +1,6 @@
 from .kinematic import constant_velocity_predict
 from .legacy.rnn_seq2seq import GRUSeq2Seq
-from .tptrans import TPTrans
+from .legacy.tptrans import TPTrans
 
 try:
     from .kalman_filter.kalman_filter import (

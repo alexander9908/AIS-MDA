@@ -11,7 +11,7 @@ import time
 from ...config import load_config
 from ...models import GRUSeq2Seq, TPTrans
 from ...utils.datasets_V3 import make_ais_dataset
-from ...models.traisformer1 import TrAISformer, BinSpec
+from ...models.traisformer_old import TrAISformer, BinSpec
 from ...utils.logging import CustomLogger
 from torchinfo import summary
 from multiprocessing import cpu_count
