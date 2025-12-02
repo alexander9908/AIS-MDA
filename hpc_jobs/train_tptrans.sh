@@ -8,7 +8,7 @@
 #BSUB -q gpua100
 
 ### -- set the job Name --
-#BSUB -J tptrans_fml_delta_v2
+#BSUB -J tptrans_fml_delta_v3
 
 ### -- ask for number of CPU cores (min 4 per GPU is recommended) --
 #BSUB -n 4
@@ -31,8 +31,8 @@
 #BSUB -N
 
 ### -- output and error files. %J is the job-id --
-#BSUB -o hpc_jobs/logs/tptrans_delta_v2_%J.out
-#BSUB -e hpc_jobs/logs/tptrans_delta_v2_%J.err
+#BSUB -o hpc_jobs/logs/tptrans_delta_v3_%J.out
+#BSUB -e hpc_jobs/logs/tptrans_delta_v3_%J.err
 
 ### -- end of LSF options ----------------------------------------------------
 
@@ -51,6 +51,6 @@ module swap cuda/12.6.3
 
 # Run the TPTrans training with the full config
 # (make sure configs/traj_tptrans_full.yaml exists and is correct)
-python -m src.train.train_traj_ES_V2 --config configs/traj_tptrans_full.yaml
-python -m src.train.train_traj_ES_V2 --config configs/traj_tptrans_medium.yaml
-python -m src.train.train_traj_ES_V2 --config configs/traj_tptrans_small.yaml
+python -m src.train.train_traj_v3 --config configs/traj_tptrans_full.yaml
+python -m src.train.train_traj_v3 --config configs/traj_tptrans_medium.yaml
+python -m src.train.train_traj_v3 --config configs/traj_tptrans_small.yaml

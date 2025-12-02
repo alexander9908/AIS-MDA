@@ -1,8 +1,8 @@
 # configs/traisformer.yaml
 task: trajectory
 # CHANGE TO YOUR DATA PATH
-processed_dir: data/processed_final/map_reduced/
-out_dir: data/checkpoints/traisformer_run/
+processed_dir: /dtu/blackhole/10/178320/preprocessed_2/final/
+out_dir: data/checkpoints/traisformer_new_small/
 
 window: 64
 horizon: 12
@@ -17,8 +17,8 @@ bins:
 model:
   name: traisformer
   d_model: 512
-  nhead: 8
-  num_layers: 6
+  nhead: 4
+  num_layers: 4
   dropout: 0.1
   emb_lat: 128
   emb_lon: 128
