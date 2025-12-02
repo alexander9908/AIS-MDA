@@ -1,4 +1,4 @@
-# src/eval/eval_traj.py
+# src/eval/eval_traj_new.py
 from __future__ import annotations
 import matplotlib
 matplotlib.use('Agg') 
@@ -18,16 +18,10 @@ import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 
 # ---------------- Models ----------------
-from src.models.legacy.traisformer_old import TrAISformer, BinSpec
-try:
-    from src.models.tptrans_gru import TPTrans
-except ImportError:
-    # Try importing V3 if V2 fails or is replaced
-    try:
-        from src.models.tptrans_transformer import TPTrans
-    except ImportError:
-        print("[Warning] Could not import TPTrans, falling back to basic definition")
-        from src.models.legacy.tptrans import TPTrans
+# Using TrAISformer from your traisformer2.py structure
+from src.models.legacy.traisformer4 import TrAISformer, BinSpec # Assuming you saved the new class here
+from src.models.tptrans_V3 import TPTrans
+
 
 # ---------------- Water mask ----------------
 from src.utils.water_guidance import is_water, project_to_water
@@ -121,6 +115,7 @@ def build_model(kind: str, ckpt: str, feat_dim: int, horizon: int):
     meta = {
         "scale_factor": sd_top.get("scale_factor", 100.0), 
         "norm_config": sd_top.get("norm_config", None),
+        "data_bounds": sd_top.get("data_bounds", None),
         "bins": None
     }
 
@@ -133,18 +128,14 @@ def build_model(kind: str, ckpt: str, feat_dim: int, horizon: int):
             
         print(f"[Model] Detected TPTrans configuration: d_model={d_model}")
         
-        # Heuristic to detect model depth
         enc_layers = 0
         while f'encoder.layers.{enc_layers}.linear1.weight' in clean_sd: enc_layers += 1
         if enc_layers == 0: enc_layers = 4 
         
         dec_layers = 0
-        # Check for GRU (V2) or TransformerDecoder (V3)
         if 'dec.weight_ih_l0' in clean_sd:
-            # GRU structure
             while f'dec.weight_ih_l{dec_layers}' in clean_sd: dec_layers += 1
         else:
-            # Transformer Decoder structure
             while f'decoder.layers.{dec_layers}.linear1.weight' in clean_sd: dec_layers += 1
             
         if dec_layers == 0: dec_layers = 2 
@@ -161,24 +152,39 @@ def build_model(kind: str, ckpt: str, feat_dim: int, horizon: int):
     if kind.lower() == "traisformer":
         bins = load_bins_from_ckpt(sd_top)
         meta["bins"] = bins
-        d_model = sd_top.get("d_model", 512)
-        nhead = sd_top.get("nhead", 8)
-        num_layers = sd_top.get("num_layers", 8)
-        dropout = sd_top.get("dropout", 0.1)
         
-        model = TrAISformer(bins=bins, d_model=d_model, nhead=nhead, num_layers=num_layers, dropout=dropout)
+        # Try to load config from checkpoint
+        cfg = sd_top.get("config", {})
+        model_cfg = cfg.get("model", {})
+        
+        d_model = model_cfg.get("d_model", sd_top.get("d_model", 512))
+        nhead = model_cfg.get("nhead", sd_top.get("nhead", 8))
+        num_layers = model_cfg.get("num_layers", sd_top.get("num_layers", 8))
+        dropout = model_cfg.get("dropout", sd_top.get("dropout", 0.1))
+        
+        emb_lat = model_cfg.get("emb_lat", 128)
+        emb_lon = model_cfg.get("emb_lon", 128)
+        emb_sog = model_cfg.get("emb_sog", 64)
+        emb_cog = model_cfg.get("emb_cog", 64) 
+        
+        print("[Model] Initializing TrAISformer with Internal Water Mask...")
+        
+        print(f"[Model] TrAISformer Config: d_model={d_model}, nhead={nhead}, layers={num_layers}")
+        
+        model = TrAISformer(bins=bins, d_model=d_model, nhead=nhead, num_layers=num_layers, dropout=dropout,
+                            emb_lat=emb_lat, emb_lon=emb_lon, emb_sog=emb_sog, emb_cog=emb_cog, use_water_mask=True)
         model.load_state_dict(clean_sd, strict=False)
+        
+        print("-" * 40)
+        print(f"[Model] TrAISformer Loaded.")
+        print(f"        Internal Bins: Lat[{bins.lat_min}:{bins.lat_max}] Lon[{bins.lon_min}:{bins.lon_max}]")
+        print("-" * 40)
+
         return model, meta
         
     raise ValueError(f"unknown model kind: {kind}")
 
-# --- NEW: Ray Casting Logic for Anti-Grounding ---
 def is_path_safe(lat1, lon1, lat2, lon2, steps=5):
-    """
-    Checks if a straight line between two points crosses land.
-    Returns: (True, None) if safe.
-             (False, (hit_lat, hit_lon)) if it hits land.
-    """
     for i in range(1, steps + 1):
         frac = i / steps
         test_lat = lat1 + (lat2 - lat1) * frac
@@ -191,7 +197,7 @@ def is_path_safe(lat1, lon1, lat2, lon2, steps=5):
 def evaluate_and_plot_trip(fpath: str, trip: np.ndarray, model, meta, args, sample_idx: int) -> Dict[str, Any]:
     mmsi, tid = parse_trip(fpath)
     
-    # 1. Denormalize using DATA BOUNDS
+    # 1. Denormalize using DATA BOUNDS (CLI args)
     full_lat_norm = trip[:, 0]
     full_lon_norm = trip[:, 1]
     full_sog_norm = trip[:, 2]
@@ -199,6 +205,8 @@ def evaluate_and_plot_trip(fpath: str, trip: np.ndarray, model, meta, args, samp
 
     full_lat_deg = full_lat_norm * (args.lat_max - args.lat_min) + args.lat_min
     full_lon_deg = full_lon_norm * (args.lon_max - args.lon_min) + args.lon_min
+    full_sog_kn = full_sog_norm * args.speed_max
+    full_cog_deg = full_cog_norm * 360.0
 
     past, future_true_all, cut = split_by_percent(trip, args.pred_cut)
     
@@ -213,7 +221,6 @@ def evaluate_and_plot_trip(fpath: str, trip: np.ndarray, model, meta, args, samp
     lats_past = full_lat_deg[:cut]; lons_past = full_lon_deg[:cut]
     cur_lat = float(lats_past[-1]); cur_lon = float(lons_past[-1])
     
-    # Connect True Path to Current Position
     raw_lats_future = full_lat_deg[cut:cut+N_future]
     raw_lons_future = full_lon_deg[cut:cut+N_future]
     lats_true_plot = np.concatenate(([cur_lat], raw_lats_future))
@@ -225,7 +232,129 @@ def evaluate_and_plot_trip(fpath: str, trip: np.ndarray, model, meta, args, samp
     device = torch.device("cuda" if torch.cuda.is_available() and not args.cpu else "cpu")
     model = model.to(device).eval()
 
-    if args.model.lower() == "tptrans":
+    best_pred_lat = np.zeros(N_future + 1) + cur_lat
+    best_pred_lon = np.zeros(N_future + 1) + cur_lon
+    best_ade = float('inf')
+    best_fde = float('inf')
+
+    if args.model.lower() == "traisformer":
+        # --- TRAISFORMER ---
+        # Truncate to past_len to match training window
+        if len(full_lat_deg[:cut]) > args.past_len:
+            start_idx = cut - args.past_len
+        else:
+            start_idx = 0
+            
+        past_lat = full_lat_deg[start_idx:cut]
+        past_lon = full_lon_deg[start_idx:cut]
+        past_sog = full_sog_kn[start_idx:cut]
+        past_cog = full_cog_deg[start_idx:cut]
+        
+        past_idxs = {
+            "lat": model.bins.lat_to_bin(torch.from_numpy(past_lat).float()).unsqueeze(0).to(device),
+            "lon": model.bins.lon_to_bin(torch.from_numpy(past_lon).float()).unsqueeze(0).to(device),
+            "sog": model.bins.sog_to_bin(torch.from_numpy(past_sog).float()).unsqueeze(0).to(device),
+            "cog": model.bins.cog_to_bin(torch.from_numpy(past_cog).float()).unsqueeze(0).to(device),
+        }
+        
+        if sample_idx == 0:
+            print(f"[DEBUG] Trip {mmsi} Past Lat Range: {past_lat.min():.4f} - {past_lat.max():.4f}")
+            print(f"[DEBUG] Trip {mmsi} Past Lon Range: {past_lon.min():.4f} - {past_lon.max():.4f}")
+            print(f"[DEBUG] Trip {mmsi} Past Lat Idxs: {past_idxs['lat'].cpu().numpy()}")
+        
+        n_samples = max(1, args.samples)
+        for s in range(n_samples):
+            # SLIDING WINDOW GENERATION
+            all_pred_idxs = {k: [] for k in ["lat", "lon", "sog", "cog"]}
+            curr_past_idxs = {k: v.clone() for k, v in past_idxs.items()}
+            
+            steps_generated = 0
+            chunk_size = args.horizon # Use the training horizon as chunk size
+            
+            while steps_generated < N_future:
+                step_len = min(chunk_size, N_future - steps_generated)
+                
+                with torch.no_grad():
+                    # Generate next chunk
+                    chunk_out = model.generate(
+                        curr_past_idxs, 
+                        L=step_len, 
+                        sampling="sample" if args.temperature > 0 else "greedy",
+                        temperature=args.temperature,
+                        top_k=args.top_k,
+                        #local_window=args.local_window,
+                        prevent_stuck=args.prevent_stuck
+                    )
+                
+                # Append to results
+                for k in all_pred_idxs:
+                    all_pred_idxs[k].append(chunk_out[k])
+                
+                # Update past for next iteration
+                # chunk_out[k] is [B, step_len]
+                # curr_past_idxs[k] is [B, past_len]
+                # We want to slide: remove first step_len, append new step_len
+                for k in curr_past_idxs:
+                    # Concatenate along time dim (1)
+                    new_past = torch.cat([curr_past_idxs[k], chunk_out[k]], dim=1)
+                    # Keep only the last past_len
+                    curr_past_idxs[k] = new_past[:, -args.past_len:]
+                
+                steps_generated += step_len
+            
+            # Concatenate all chunks
+            out_idxs = {k: torch.cat(v, dim=1) for k, v in all_pred_idxs.items()}
+            
+            # Decode to degrees
+            pred_lats_deg = model.bins.bin_to_lat_mid(out_idxs["lat"].flatten().cpu()).numpy()
+            pred_lons_deg = model.bins.bin_to_lon_mid(out_idxs["lon"].flatten().cpu()).numpy()
+            
+            if sample_idx < 3:
+                print(f"[DEBUG] Trip {mmsi} Pred Lat Idxs: {out_idxs['lat'].flatten().cpu().numpy()}")
+                print(f"[DEBUG] Trip {mmsi} Pred Lon Idxs: {out_idxs['lon'].flatten().cpu().numpy()}")
+                print(f"[DEBUG] Trip {mmsi} Pred SOG Idxs: {out_idxs['sog'].flatten().cpu().numpy()}")
+            
+            # Apply External Water Mask (Ray Casting)
+            fixed_lats, fixed_lons = [], []
+            curr_l, curr_o = cur_lat, cur_lon
+            
+            water_fix_count = 0
+            for k in range(len(pred_lats_deg)):
+                cand_l, cand_o = float(pred_lats_deg[k]), float(pred_lons_deg[k])
+                is_safe, _ = is_path_safe(curr_l, curr_o, cand_l, cand_o, steps=5)
+                
+                if is_safe:
+                    fix_l, fix_o = cand_l, cand_o
+                else:
+                    fix_l, fix_o = project_to_water(curr_l, curr_o, cand_l, cand_o)
+                    water_fix_count += 1
+                
+                fixed_lats.append(fix_l)
+                fixed_lons.append(fix_o)
+                curr_l, curr_o = fix_l, fix_o
+            
+            if sample_idx < 3 and water_fix_count > 0:
+                print(f"[DEBUG] Trip {mmsi} Water Fixes: {water_fix_count}/{len(pred_lats_deg)}")
+                
+            pred_lats_deg = np.array(fixed_lats)
+            pred_lons_deg = np.array(fixed_lons)
+
+            # Metrics
+            n_comp = min(len(pred_lats_deg), len(lats_true_eval))
+            if n_comp > 0:
+                curr_ade = float(np.mean([haversine_km(lats_true_eval[i], lons_true_eval[i], pred_lats_deg[i], pred_lons_deg[i]) for i in range(n_comp)]))
+                curr_fde = float(haversine_km(lats_true_eval[n_comp-1], lons_true_eval[n_comp-1], pred_lats_deg[n_comp-1], pred_lons_deg[n_comp-1]))
+            else:
+                curr_ade, curr_fde = 9999.0, 9999.0
+
+            if curr_ade < best_ade:
+                best_ade = curr_ade
+                best_fde = curr_fde
+                best_pred_lat = np.concatenate(([cur_lat], pred_lats_deg))
+                best_pred_lon = np.concatenate(([cur_lon], pred_lons_deg))
+
+    elif args.model.lower() == "tptrans":
+        # --- TPTRANS ---
         seq_in = np.stack([full_lat_norm[:cut], full_lon_norm[:cut], full_sog_norm[:cut], full_cog_norm[:cut]], axis=1).astype(np.float32)
         curr_seq_in = seq_in.copy()
         pred_lat_list = [cur_lat]; pred_lon_list = [cur_lon]
@@ -259,14 +388,11 @@ def evaluate_and_plot_trip(fpath: str, trip: np.ndarray, model, meta, args, samp
                 prev_lat_deg = pred_lat_list[-1]
                 prev_lon_deg = pred_lon_list[-1]
                 
-                # --- IMPROVED LAND CHECK: Ray Casting ---
-                # Check path continuity, not just destination
                 is_safe, hit_pt = is_path_safe(prev_lat_deg, prev_lon_deg, cand_lat_deg, cand_lon_deg, steps=5)
                 
                 if is_safe:
                     fix_lat_deg, fix_lon_deg = cand_lat_deg, cand_lon_deg
                 else:
-                    # Path hit land! Project to valid water point near the collision
                     fix_lat_deg, fix_lon_deg = project_to_water(prev_lat_deg, prev_lon_deg, cand_lat_deg, cand_lon_deg)
                 
                 pred_lat_list.append(fix_lat_deg)
@@ -285,54 +411,32 @@ def evaluate_and_plot_trip(fpath: str, trip: np.ndarray, model, meta, args, samp
             steps_generated += chunk_len
             if steps_generated >= steps_needed: break
 
-        pred_lat = np.array(pred_lat_list)
-        pred_lon = np.array(pred_lon_list)
+        best_pred_lat = np.array(pred_lat_list)
+        best_pred_lon = np.array(pred_lon_list)
         
-        # --- SMOOTHING (Removes Model Jitter) ---
-        # A simple moving average to make lines look clean
-        if len(pred_lat) > 4:
-            kernel_size = 3
-            kernel = np.ones(kernel_size) / kernel_size
-            # Pad to keep length same
-            lat_pad = np.pad(pred_lat, (1, 1), mode='edge')
-            lon_pad = np.pad(pred_lon, (1, 1), mode='edge')
-            pred_lat = np.convolve(lat_pad, kernel, mode='valid')
-            pred_lon = np.convolve(lon_pad, kernel, mode='valid')
-
-    else:
-        pred_lat = np.zeros(N_future + 1) + cur_lat 
-        pred_lon = np.zeros(N_future + 1) + cur_lon
-
-    if args.match_distance and len(pred_lat) > 1 and len(lats_true_eval) > 1:
-        dt_true = cumdist(lats_true_eval, lons_true_eval)[-1]
-        cd = cumdist(pred_lat, pred_lon)
-        keep = int(np.searchsorted(cd, dt_true, side="right"))
-        keep = max(2, min(keep, len(pred_lat)))
-        pred_lat, pred_lon = pred_lat[:keep], pred_lon[:keep]
-
-    preds_to_eval_lat = pred_lat[1:]
-    preds_to_eval_lon = pred_lon[1:]
-    n_comp = min(len(preds_to_eval_lat), len(lats_true_eval))
-    
-    if n_comp > 0:
-        ade = float(np.mean([haversine_km(lats_true_eval[i], lons_true_eval[i], preds_to_eval_lat[i], preds_to_eval_lon[i]) for i in range(n_comp)]))
-        fde = float(haversine_km(lats_true_eval[n_comp-1], lons_true_eval[n_comp-1], preds_to_eval_lat[n_comp-1], preds_to_eval_lon[n_comp-1]))
-    else:
-        ade, fde = np.nan, np.nan
+        preds_to_eval_lat = best_pred_lat[1:]
+        preds_to_eval_lon = best_pred_lon[1:]
+        n_comp = min(len(preds_to_eval_lat), len(lats_true_eval))
+        
+        if n_comp > 0:
+            best_ade = float(np.mean([haversine_km(lats_true_eval[i], lons_true_eval[i], preds_to_eval_lat[i], preds_to_eval_lon[i]) for i in range(n_comp)]))
+            best_fde = float(haversine_km(lats_true_eval[n_comp-1], lons_true_eval[n_comp-1], preds_to_eval_lat[n_comp-1], preds_to_eval_lon[n_comp-1]))
+        else:
+            best_ade, best_fde = np.nan, np.nan
 
     res = {
         "mmsi": mmsi, "trip": tid, "cut_idx": cut,
-        "ade_km": ade, "fde_km": fde,
+        "ade_km": best_ade, "fde_km": best_fde,
         "png": "skipped"
     }
     
     if args.same_pic or args.folium:
         res["plot_data"] = {
             "mmsi": mmsi,
-            "ade": ade, "fde": fde,
+            "ade": best_ade, "fde": best_fde,
             "lats_past": lats_past, "lons_past": lons_past,
             "lats_true": lats_true_plot, "lons_true": lons_true_plot, 
-            "lats_pred": pred_lat, "lons_pred": pred_lon
+            "lats_pred": best_pred_lat, "lons_pred": best_pred_lon
         }
 
     # ---- INDIVIDUAL PLOTTING ----
@@ -341,12 +445,12 @@ def evaluate_and_plot_trip(fpath: str, trip: np.ndarray, model, meta, args, samp
         outdir_mmsi.mkdir(parents=True, exist_ok=True)
         fname_png = outdir_mmsi / f"traj_{args.model}_mmsi-{mmsi}_trip-{tid}_cut-{args.pred_cut}_idx-{sample_idx}.png"
 
-        if args.plot_lat_min is not None and args.plot_lat_max is not None:
+        if args.plot_lat_min is not None:
             p_lat_min, p_lat_max = args.plot_lat_min, args.plot_lat_max
             p_lon_min, p_lon_max = args.plot_lon_min, args.plot_lon_max
         else:
-            all_lats = np.concatenate([lats_past, lats_true_plot, pred_lat])
-            all_lons = np.concatenate([lons_past, lons_true_plot, pred_lon])
+            all_lats = np.concatenate([lats_past, lats_true_plot, best_pred_lat])
+            all_lons = np.concatenate([lons_past, lons_true_plot, best_pred_lon])
             pad = 0.15
             p_lat_min, p_lat_max = np.min(all_lats) - pad, np.max(all_lats) + pad
             p_lon_min, p_lon_max = np.min(all_lons) - pad * 1.5, np.max(all_lons) + pad * 1.5
@@ -355,28 +459,21 @@ def evaluate_and_plot_trip(fpath: str, trip: np.ndarray, model, meta, args, samp
         ax = fig.add_subplot(1, 1, 1, projection=ccrs.Mercator())
         ax.set_extent([p_lon_min, p_lon_max, p_lat_min, p_lat_max], crs=ccrs.PlateCarree())
         
-        land_feature = cfeature.GSHHSFeature(scale='h', levels=[1], 
-                                           facecolor=STYLE["land"], 
-                                           edgecolor=STYLE["edge"],
-                                           linewidth=0.5)
+        land_feature = cfeature.GSHHSFeature(scale='h', levels=[1], facecolor=STYLE["land"], edgecolor=STYLE["edge"], linewidth=0.5)
         ax.add_feature(land_feature)
-        ax.add_feature(cfeature.BORDERS, linestyle=':', alpha=0.5, linewidth=0.5)
+        ax.add_feature(cfeature.BORDERS, linestyle=':', alpha=0.5)
         gl = ax.gridlines(draw_labels=True, linewidth=0.5, color=STYLE["grid"], alpha=0.5, linestyle='--')
         gl.top_labels = False; gl.right_labels = False
 
-        ax.plot(lons_past, lats_past, transform=ccrs.PlateCarree(), 
-                lw=2.5, color=STYLE["past"], label="Past", zorder=3)
-        ax.plot(lons_true_plot, lats_true_plot, transform=ccrs.PlateCarree(), 
-                lw=3.0, color=STYLE["true"], label="True", zorder=4)
-        if len(pred_lon) > 1:
-            ax.plot(pred_lon, pred_lat, transform=ccrs.PlateCarree(), 
-                    lw=3.0, color=STYLE["pred"], label="Pred", zorder=5)
+        ax.plot(lons_past, lats_past, transform=ccrs.PlateCarree(), lw=2.5, color=STYLE["past"], label="Past", zorder=3)
+        ax.plot(lons_true_plot, lats_true_plot, transform=ccrs.PlateCarree(), lw=3.0, color=STYLE["true"], label="True", zorder=4)
+        if len(best_pred_lon) > 1:
+            ax.plot(best_pred_lon, best_pred_lat, transform=ccrs.PlateCarree(), lw=3.0, color=STYLE["pred"], label="Pred", zorder=5)
             
-        ax.scatter([lons_past[-1]], [lats_past[-1]], transform=ccrs.PlateCarree(), 
-                   s=50, c=STYLE["pred"], edgecolors="k", zorder=10, label="Current Pos")
+        ax.scatter([lons_past[-1]], [lats_past[-1]], transform=ccrs.PlateCarree(), s=50, c=STYLE["pred"], edgecolors="k", zorder=10, label="Current")
 
         ax.legend(loc='upper right', frameon=True, framealpha=0.9, fancybox=True)
-        ax.set_title(f"MMSI {mmsi} | ADE {ade:.2f} km | FDE {fde:.2f} km")
+        ax.set_title(f"MMSI {mmsi} | ADE {best_ade:.2f} km | FDE {best_fde:.2f} km")
         
         fig.tight_layout()
         fig.savefig(fname_png, dpi=args.dpi, bbox_inches='tight')
@@ -386,7 +483,6 @@ def evaluate_and_plot_trip(fpath: str, trip: np.ndarray, model, meta, args, samp
     return res
 
 def generate_folium_map(plot_data_list, out_dir, args):
-    """Generates an interactive HTML map using Folium."""
     print("-" * 40)
     print(f"Generating Interactive Map for {len(plot_data_list)} trips...")
 
@@ -396,55 +492,28 @@ def generate_folium_map(plot_data_list, out_dir, args):
         all_lats.extend(d['lats_past'])
         all_lons.extend(d['lons_past'])
     
-    if not all_lats:
-        print("No data to plot in Folium.")
-        return
+    if not all_lats: return
 
     lat_center = np.mean(all_lats)
     lon_center = np.mean(all_lons)
     
     m = folium.Map(location=[lat_center, lon_center], zoom_start=6, tiles=None)
 
-    folium.TileLayer(
-        tiles="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-        attr="&copy; OpenStreetMap contributors",
-        name="OSM Streets"
-    ).add_to(m)
-
-    folium.TileLayer(
-        "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-        attr="Esri World Imagery",
-        name="Esri Satellite"
-    ).add_to(m)
+    folium.TileLayer(tiles="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", attr="&copy; OpenStreetMap", name="OSM Streets").add_to(m)
+    folium.TileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", attr="Esri World Imagery", name="Esri Satellite").add_to(m)
 
     for d in plot_data_list:
         tooltip_txt = f"MMSI: {d['mmsi']} | ADE: {d['ade']:.2f} km | FDE: {d['fde']:.2f} km"
         
-        folium.PolyLine(
-            locations=list(zip(d['lats_past'], d['lons_past'])),
-            color=STYLE["past"], weight=2.5, opacity=0.8, 
-            tooltip=tooltip_txt + " (Past)"
-        ).add_to(m)
-
-        # FIXED: Green line now uses connected points from plot_data
-        folium.PolyLine(
-            locations=list(zip(d['lats_true'], d['lons_true'])),
-            color=STYLE["true"], weight=3, opacity=0.8,
-            tooltip=tooltip_txt + " (True)"
-        ).add_to(m)
-
+        folium.PolyLine(locations=list(zip(d['lats_past'], d['lons_past'])), color=STYLE["past"], weight=2.5, opacity=0.8, tooltip=tooltip_txt).add_to(m)
+        folium.PolyLine(locations=list(zip(d['lats_true'], d['lons_true'])), color=STYLE["true"], weight=3, opacity=0.8, tooltip=tooltip_txt).add_to(m)
         if len(d['lats_pred']) > 1:
-            folium.PolyLine(
-                locations=list(zip(d['lats_pred'], d['lons_pred'])),
-                color=STYLE["pred"], weight=3, opacity=0.9,
-                tooltip=tooltip_txt + " (Pred)"
-            ).add_to(m)
+            folium.PolyLine(locations=list(zip(d['lats_pred'], d['lons_pred'])), color=STYLE["pred"], weight=3, opacity=0.9, tooltip=tooltip_txt).add_to(m)
 
     folium.LayerControl().add_to(m)
     out_file = Path(out_dir) / "interactive_map.html"
     m.save(out_file)
     print(f"Interactive map saved to: {out_file}")
-
 
 # ---------------- Main ----------------
 def main():
@@ -479,11 +548,13 @@ def main():
     p.add_argument("--pred_len", type=int, default=None)
     p.add_argument("--samples", type=int, default=1)
     p.add_argument("--temperature", type=float, default=1.0)
-    p.add_argument("--top_k", type=int, default=60)
+    p.add_argument("--top_k", type=int, default=20)
     p.add_argument("--cap_future", type=int, default=None)
     p.add_argument("--cpu", action="store_true")
     p.add_argument("--mmsi", default="") 
     p.add_argument("--speed_max", type=float, default=30.0)
+    p.add_argument("--local_window", type=int, default=10, help="Constrain prediction to +/- bins")
+    p.add_argument("--prevent_stuck", action="store_true", help="Force movement if SOG is high")
 
     args = p.parse_args()
     Path(args.out_dir).mkdir(parents=True, exist_ok=True)
@@ -498,7 +569,16 @@ def main():
     
     # Auto-fill DATA bounds
     norm_config = meta.get("norm_config")
-    if norm_config:
+    data_bounds = meta.get("data_bounds")
+    
+    if data_bounds:
+        print(f"[DEBUG] Loading DATA BOUNDS from checkpoint: {data_bounds}")
+        if args.lat_min is None: args.lat_min = data_bounds.get("LAT_MIN")
+        if args.lat_max is None: args.lat_max = data_bounds.get("LAT_MAX")
+        if args.lon_min is None: args.lon_min = data_bounds.get("LON_MIN")
+        if args.lon_max is None: args.lon_max = data_bounds.get("LON_MAX")
+        if "SOG_MAX" in data_bounds: args.speed_max = data_bounds.get("SOG_MAX")
+    elif norm_config:
         if args.lat_min is None: args.lat_min = norm_config.get("LAT_MIN")
         if args.lat_max is None: args.lat_max = norm_config.get("LAT_MAX")
         if args.lon_min is None: args.lon_min = norm_config.get("LON_MIN")
@@ -545,6 +625,9 @@ def main():
 
     # --- FINAL METRICS ---
     print("-" * 40)
+    mean_ade, mean_fde = 0.0, 0.0
+    median_ade, median_fde = 0.0, 0.0
+    
     if metrics:
         out_csv = Path(args.out_dir) / "metrics.csv"
         

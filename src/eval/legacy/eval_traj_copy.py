@@ -18,7 +18,7 @@ import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 
 # ---------------- Models ----------------
-from src.models.traisformer_old import TrAISformer, BinSpec
+from src.models.legacy.traisformer_old import TrAISformer, BinSpec
 try:
     from src.models.tptrans_gru import TPTrans
 except ImportError:

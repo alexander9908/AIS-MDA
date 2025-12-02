@@ -10,7 +10,7 @@ import torch
 import matplotlib.pyplot as plt
 
 # ---------------- Models ----------------
-from src.models.traisformer_old import TrAISformer, BinSpec
+from src.models.legacy.traisformer_old import TrAISformer, BinSpec
 # Use V2 as requested
 try:
     from src.models.tptrans_gru import TPTrans

@@ -22,7 +22,7 @@ try:
     from src.models.traisformer import TrAISformer, BinSpec
 except ImportError:
     print("[Warning] Could not import TrAISformer3, falling back...")
-    from src.models.traisformer_old import TrAISformer, BinSpec
+    from src.models.legacy.traisformer_old import TrAISformer, BinSpec
 
 try:
     from src.models.tptrans_transformer import TPTrans

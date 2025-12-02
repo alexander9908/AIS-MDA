@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 
 # ---------------- Models ----------------
 # Adjust these imports to your tree if paths differ.
-from src.models.traisformer_old import TrAISformer, BinSpec
+from src.models.legacy.traisformer_old import TrAISformer, BinSpec
 from src.models.legacy.tptrans import TPTrans
 
 # ---------------- Water mask (background only) ----------------
