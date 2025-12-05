@@ -12,8 +12,6 @@ This paper addresses the challenge of forecasting vessel trajectories using Auto
 
 ## 📁 Project Layout
 
-## 🧩 Project Structure
-
 ```text
 ais-mda/
 ├── README.md
