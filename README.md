@@ -38,6 +38,7 @@ ais-mda/
 │   └── utils/                # Geospatial and batching helpers
 ├── configs/                  # YAML configs for experiments
 └── scripts/                  # CLI automation for preprocessing/training
+```
 ---
 
 ## 🚢 Background
