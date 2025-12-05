@@ -18,13 +18,11 @@ from ..utils.datasets_V3 import make_ais_dataset
 from ..utils.logging import CustomLogger
 
 # --- CRITICAL: MATCH THESE TO PREPROCESSING.PY ---
-# I extracted these from your uploaded preprocessing.py
-# If these don't match the data creation, predictions will be wrong.
 DATA_BOUNDS = {
     "LAT_MIN": 54.0,
-    "LAT_MAX": 59.0,  # Note: Preprocessing uses 59, Eval used 58. Using 59 matches data.
-    "LON_MIN": 5.0,   # Note: Preprocessing uses 5.0
-    "LON_MAX": 17.0,  # Note: Preprocessing uses 17.0
+    "LAT_MAX": 59.0,  
+    "LON_MIN": 5.0,   
+    "LON_MAX": 17.0,  
     "SOG_MAX": 30.0,
 }
 

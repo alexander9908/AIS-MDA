@@ -10,7 +10,7 @@ import numpy as np
 # Adjust imports based on your project structure
 from ..config import load_config
 from ..models.traisformer import TrAISformer, BinSpec
-from ..utils.datasets_final import make_ais_dataset  # Using V5 for TrAISformer
+from ..utils.datasets import make_ais_dataset  # Using V5 for TrAISformer
 from ..utils.logging import CustomLogger
 
 # --- CONFIG: DATA BOUNDS ---
