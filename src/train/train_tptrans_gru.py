@@ -14,7 +14,7 @@ from torchinfo import summary
 # Adjust these imports if your folder structure is different
 from ..config import load_config
 from ..models.tptrans_gru import TPTrans
-from ..utils.datasets_V3 import make_ais_dataset
+from ..utils.legacy.datasets_V3 import make_ais_dataset
 from ..utils.logging import CustomLogger
 
 # --- CRITICAL: MATCH THESE TO PREPROCESSING.PY ---
