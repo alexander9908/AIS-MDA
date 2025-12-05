@@ -5,11 +5,10 @@ task: trajectory
 processed_dir: data/processed/map_reduced/ #/dtu/blackhole/10/178320/preprocessed_2/final/
 out_dir: data/checkpoints/
 
-# Sequence setup
-window: 64          # length of observed history
-horizon: 12         # prediction horizon
+window: 64       
+horizon: 12      
 
-start_mode: kmeans  # set to "kmeans" to enable centroid-based starting points
+start_mode: kmeans  
 kmeans:
   n_clusters: 50
   samples_per_traj: 200
@@ -17,8 +16,7 @@ kmeans:
   n_init: 10
   random_state: 42
 
-# Full feature list in the preprocessed pickle; the model will still only
-# use the first 4: [LAT, LON, SOG, COG].
+# The model only use the first 4: [LAT, LON, SOG, COG].
 features: [LAT, LON, SOG, COG, HEADING, ROT, NAV_STT, TIMESTAMP, MMSI]
 
 model:
@@ -28,23 +26,19 @@ model:
   enc_layers: 8     # encoder depth
   dec_layers: 8     # decoder depth
 
-# Training setup
 loss: huber
 optimizer: adamw
 
-# These are what your training script reads:
-lr: 0.0003          # AdamW learning rate
+lr: 0.0003          
 batch_size: 512 
-epochs: 200                # allow enough room to converge
+epochs: 200                
 epoch_samples: 5
 
-early_stop_patience: 5     # stop if 5 epochs pass without real improvement
-early_stop_min_delta: 1e-3 # require at least 1e-3 improvement in val loss
+early_stop_patience: 5     
+early_stop_min_delta: 1e-3 
 
-
-# Extra stability knobs used in train_traj_ES.py:
-huber_delta: 1.0    # SmoothL1 beta (default in code)
-clip_norm: 1.0      # gradient clipping max-norm (default in code)
+huber_delta: 1.0    
+clip_norm: 1.0      
 
 wandb_group: tp_trans_local_medium
 run_name: tptrans_medium_run
