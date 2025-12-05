@@ -1,4 +1,4 @@
-# Enhancing Maritime Domain Awareness: Robust Vessel Trajectory Prediction
+# Enhancing Maritime Domain Awareness: A Comparative Study of Hybrid Transformer Architectures for Robust Vessel AIS Trajectory Prediction
 
 **02456 Deep Learning, DTU Compute, Fall 2025**
 
@@ -14,6 +14,7 @@ This paper addresses the challenge of forecasting vessel trajectories using Auto
 
 ```text
 ais-mda/
+├── Deep_Learning_AIS-MDA_Project.pdf
 ├── README.md
 ├── env/
 │   ├── environment.yml
@@ -42,6 +43,8 @@ ais-mda/
 ---
 
 ## 🚢 Background
+
+**Data Scource: https://www.dma.dk/safety-at-sea/navigational-information/ais-data**
 
 AIS messages contain:
 - Vessel ID (MMSI)
