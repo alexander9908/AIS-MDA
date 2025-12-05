@@ -1,7 +1,7 @@
 # configs/traj_traisformer.yaml
 task: trajectory
 # CHANGE TO YOUR DATA PATH
-processed_dir: data/processed_final/map_reduced/ #/dtu/blackhole/10/178320/preprocessed_2/final/
+processed_dir: data/processed/map_reduced/ #/dtu/blackhole/10/178320/preprocessed_2/final/
 out_dir: data/checkpoints/
 
 window: 64
