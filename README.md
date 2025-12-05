@@ -10,6 +10,53 @@ This paper addresses the challenge of forecasting vessel trajectories using Auto
 
 -----
 
+## 📁 Project Layout
+
+## 🧩 Project Structure
+
+```text
+ais-mda/
+├── README.md
+├── env/
+│   ├── environment.yml
+│   └── Dockerfile
+├── data/
+│   ├── raw/                  # Raw AIS data (CSV files)
+│   ├── pickle/               # Intermediate per-vessel pickle files (Step 1)
+│   └── processed/            
+│       └── map_reduced/      # Final cleaned, interpolated, and split data (Train/Val/Test) 
+├── notebooks/
+│   ├── workflow.ipynb        # Full run pipline
+│   ├── kmeans.ipynb          # Example Kmeans sampling
+│   └── hpc.ipynb             # DTU HPC cmd's 
+├── src/
+│   ├── dataio/               # Loaders and cleaning
+│   ├── preprocessing/        # Data preprocessing and MapReduce
+│   ├── features/             # Feature engineering (Δt, Δx, ROT, accel)
+│   ├── labeling/             # Trajectory, ETA, anomaly label creation
+│   ├── models/               # Kalman, TPTrans, TrAISformer
+│   ├── train/                # Model training scripts
+│   ├── eval/                 # Model evaluation, metric computation (ADE, FDE, MAE, trajectory plots etc.)
+│   └── utils/                # Geospatial and batching helpers
+├── configs/                  # YAML configs for experiments
+└── scripts/                  # CLI automation for preprocessing/training
+---
+
+## 🚢 Background
+
+AIS messages contain:
+- Vessel ID (MMSI)
+- Timestamp
+- Latitude, Longitude
+- Speed over ground (SOG)
+- Course over ground (COG)
+- Heading
+- Navigational status
+- Vessel type, draught, destination (optional)
+
+These form **spatio-temporal trajectories** representing vessel movement patterns.
+
+
 ## 🚀 Quick Start
 
 ### 1\. Installation
