@@ -1,392 +1,156 @@
+# Enhancing Maritime Domain Awareness: Robust Vessel Trajectory Prediction
 
-# AIS-MDA — Increasing Maritime Domain Awareness with Spatio-Temporal Models
+**02456 Deep Learning, DTU Compute, Fall 2025**
 
-This repository provides a **ready-to-run** pipeline for working with real, irregular, and noisy **AIS** (Automatic Identification System) data to solve three key tasks:
-- **Trajectory prediction** — forecast future vessel positions (sequence-to-sequence).
-- **Anomaly detection** — detect abnormal vessel behavior using self-supervised learning.
-- **Port call & ETA prediction** — classify the next port and estimate time of arrival.
+This repository contains the implementation for **TPTrans** (a hybrid CNN-Transformer) and **TrAISformer** (a discrete generative Transformer) for vessel trajectory prediction in the Danish waters. The project introduces a scalable **MapReduce** preprocessing pipeline and a density-based **K-Means sampling strategy** to mitigate open-sea bias and capture complex maneuvering behaviors.
 
-It includes:
-- Modular data loading, cleaning, and segmentation.
-- Feature engineering (Δt, Δx/Δy, rate of turn, acceleration).
-- Label generation for trajectory, anomaly, and ETA tasks.
-- Baseline models (Constant Velocity, GRU, LSTM) and **TPTrans** (CNN + Transformer hybrid).
-- Evaluation metrics (ADE, FDE, MAE, MAPE, AUROC, etc.).
-- Ready-made configs, environment setup, and Docker support.
+## 📄 Abstract
 
----
+This paper addresses the challenge of forecasting vessel trajectories using Automatic Identification System (AIS) data from the Danish maritime authority (Søfartsstyrelsen). We introduce a MapReduce pipeline and K-means sampling strategy to mitigate ``open-sea bias'' and capture diverse maneuvers. Validating a kinematic Kalman Filter against a discrete TrAISformer and our custom continuous hybrid CNN-Transformer (TPTrans), we identify a critical trade-off: while TPTrans achieves superior short-term precision (lowest 1-hour ADE), TrAISformer demonstrates greater long-term stability and navigational realism. Ultimately, the navigational realism inherent in discrete generative architectures like TrAISformer establishes the necessary foundation for trustworthy, autonomous maritime surveillance.
 
-## 📁 Project Layout
+-----
 
-ais-mda/
-├── README.md
-├── env/
-│   ├── requirements.txt
-│   └── Dockerfile
-├── configs/
-├── scripts/
-└── src/
+## 🚀 Quick Start
 
----
+### 1\. Installation
 
-## 🚢 Background
-
-AIS messages contain:
-- Vessel ID (MMSI)
-- Timestamp
-- Latitude, Longitude
-- Speed over ground (SOG)
-- Course over ground (COG)
-- Heading
-- Navigational status
-- Vessel type, draught, destination (optional)
-
-These form **spatio-temporal trajectories** representing vessel movement patterns.
-
-Real AIS is **irregular**, **noisy**, and **error-prone** — making it ideal for testing robust sequential models.
-
----
-
-## 🎯 Objectives
-
-1. Build a robust preprocessing pipeline for noisy, irregular AIS data.  
-2. Develop baseline and advanced sequence models for:
-   - Vessel trajectory forecasting.
-   - Vessel anomaly detection (self-supervised).
-   - Port arrival and ETA classification/regression.
-3. Benchmark models using relevant spatio-temporal metrics.
-4. Evaluate performance on real data and demonstrate maritime use cases.
-
----
-
-## 📚 Key References
-
-These research papers guide our methodology:
-
-1. **Artificial Intelligence in Ship Trajectory Prediction** (2024)  
-   → Survey of ML and DL models for vessel trajectory forecasting, evaluation methods, and data preprocessing best practices.  
-   *(Provides overall taxonomy and baseline models.)*
-
-2. **TPTrans: Vessel Trajectory Prediction Model Based on CNN and Transformer** (2023)  
-   → Introduces *TPTrans*, combining convolutional (local) and transformer (global) layers for superior trajectory accuracy, especially in turning segments.  
-   *(Inspires our hybrid model implementation.)*
-
-3. **Vessel Trajectory Prediction with Deep Learning Techniques** (JMSE, 2025)  
-   → Evaluates Bi-LSTM, GRU, and Transformer models with real AIS data, showing preprocessing, segmentation, and horizon-dependent accuracy trends.  
-   *(Used as baseline validation and feature engineering guide.)*
-
-4. **Prediction of Vessel Arrival Time to Port — A Review of Current Studies** (2025)  
-   → Reviews ETA prediction literature; defines key feature groups (vessel, route, environment, external) and performance metrics (MAE, MAPE, P95).  
-   *(Defines the design for port-call and ETA subtask.)*
-
----
-
-## 🧩 Project Structure
-
-ais-mda/
-├── README.md
-├── env/
-│   ├── requirements.txt
-│   └── Dockerfile
-├── data/
-│   ├── raw/          # Raw AIS data (CSV or Parquet)
-│   ├── interim/      # Cleaned, gap-split trajectories
-│   └── processed/    # Windowed sequences for model training
-├── notebooks/
-│   ├── 00_explore_ais.ipynb
-│   ├── 10_clean_segment.ipynb
-│   └── 20_train_baselines.ipynb
-├── src/
-│   ├── dataio/       # loaders and cleaning
-│   ├── features/     # feature engineering (Δt, Δx, ROT, accel)
-│   ├── labeling/     # trajectory, ETA, anomaly label creation
-│   ├── models/       # GRU/LSTM, TPTrans, etc.
-│   ├── train/        # task-specific training scripts
-│   ├── eval/         # metric computation (ADE, FDE, MAE, etc.)
-│   └── utils/        # geospatial and batching helpers
-├── configs/          # YAML configs for experiments
-└── scripts/          # CLI automation for preprocessing/training
-
----
-
-## 🧪 Workflow Overview
-
-### 1. Data Preparation
-- Download AIS data (e.g., NOAA, MarineCadastre, Global Fishing Watch, or regional sources).  
-- Clean and preprocess:
-  - Remove invalid or duplicate points.
-  - Split trajectories on large time gaps.
-  - Compute derived kinematic features (Δlat, Δlon, Δt, ROT, acceleration, etc.).
-  - Retain irregular sampling or interpolate moderately (≤60 s).
-
-### 2. Feature Engineering
-- Encode course (COG) as sin/cos.
-- Compute H3 cell index or UTM grid for spatial context.
-- Optional: Add distance & bearing to nearest port (for ETA).
-
-### 3. Task Labeling
-- **Trajectory** → predict next *K* points (Δx, Δy).
-- **Anomaly** → self-supervised, using reconstruction or forecast error.
-- **Port/ETA** → classify next port and regress ETA using port polygons (e.g., NGA WPI).
-
-### 4. Modeling
-- **Baselines:** Constant velocity, Kalman filter, Bi-LSTM, GRU.
-- **Advanced:** CNN+Transformer hybrid (TPTrans).
-- **Optional:** Self-supervised pretraining for anomalies.
-
-### 5. Evaluation
-| Task | Key Metrics | Notes |
-|------|--------------|-------|
-| Trajectory | ADE, FDE, Hausdorff | Compare across horizons |
-| ETA | MAE, MAPE, P95 | Compare against naive baseline |
-| Anomaly | AUROC, AUPRC, TTD | Test with planted anomalies |
-
-### 6. Visualization
-- Plot true vs predicted trajectories.
-- Show horizon-based accuracy decay.
-- Plot ETA error distributions.
-
-#### Trajectory Evaluation Plots
-
-Use the dedicated evaluation helper to score checkpoints and generate Europe-context plots:
-
-- auto-zoom on actual (recommended):
-```bash
-python -m src.eval.eval_traj_newnewnew \
-  --split_dir data/map_reduced/val \
-  --ckpt data/checkpoints/traj_tptrans.pt \
-  --model tptrans \
-  --lat_idx 0 --lon_idx 1 \
-  --y_order latlon \
-  --past_len 64 --max_plots 8 \
-  --out_dir data/figures \
-  --auto_extent --extent_source actual --extent_outlier_sigma 3.0 \
-  --denorm --lat_min 54 --lat_max 58 --lon_min 6 --lon_max 16
-```
-- full Europe view:
-```bash
-python -m src.eval.eval_traj_newnewnew \
-  --split_dir data/map_reduced/val \
-  --ckpt data/checkpoints/traj_tptrans.pt \
-  --model tptrans \
-  --lat_idx 0 --lon_idx 1 \
-  --y_order latlon \
-  --past_len 64 --max_plots 8 \
-  --out_dir data/figures \
-  --denorm --lat_min 54 --lat_max 58 --lon_min 6 --lon_max 16
-```
-
-displays a full plot of the true past path, true future path and the predicted future path.
-
-
----
-
-## 🚀 Quickstart
-
-### 0) Create Environment
-
-Using **Python venv + pip** (recommended):
-
-Using VS Code:
-Open command palette:
-- Ctrl+Shift+P
-- Command+Shift+P
-
-Python Create environment → Select venv → Choose requirements.txt
-
-Or via terminal:
-```bash
-# Create virtual environment
-python3 -m venv .venv
-
-# Activate it (macOS/Linux)
-source .venv/bin/activate
-
-# or on Windows
-.venv\Scripts\activate
-
-# Install dependencies
-pip install --upgrade pip
-pip install -r env/requirements.txt
-
-With Docker (GPU optional):
-
-docker build -t ais-mda -f env/Dockerfile .
-docker run --rm -it -v "$(pwd)":/workspace -w /workspace ais-mda bash
-```
-
-⸻
-
-1) Prepare Interim Dataset
-
-(Clean → Segment → Feature Engineering)
+Clone the repository and install dependencies.
 
 ```bash
-bash scripts/make_interim.sh \
-  --raw data/raw/*.csv \
-  --out data/interim \
-  --gap_hours 6 --max_sog 40
+git clone https://github.com/alexander9908/AIS-MDA.git
+cd AIS-MDA
+python -m venv .venv
+source .venv/bin/activate  # or .venv\Scripts\activate on Windows
+pip install -r requirements.txt
 ```
-This script:
-	•	Loads AIS CSV/Parquet files.
-	•	Cleans invalid coordinates, speeds, and duplicates.
-	•	Splits trajectories on large time gaps.
-	•	Adds kinematic features (Δt, Δx, Δy, accel, COG sin/cos).
-	•	Adds grid-cell context (cell_id).
 
-Output:
+### 2\. Data Pipeline
+
+We utilize a scalable pipeline to handle large-scale AIS logs (tested on 3 months of DMA data).
+
+**Step A: Ingest CSV to Pickle**
+Converts raw CSVs into efficient per-vessel pickle files.
+
 ```bash
-data/interim/interim.parquet
+python -m src.preprocessing.csv2pkl \
+    --input_dir data/raw/ \
+    --output_dir data/processed_pickle_2/ \
+    --cargo_tankers_only \
+    --run_name ingestion_run
 ```
-⸻
 
-2) Build Processed Tensors for Model Training
+**Step B: MapReduce Processing**
+Cleans, segments voyages (\>2h gaps), interpolates (5 min), and normalizes data.
 
-Trajectory task
 ```bash
-bash scripts/make_processed.sh \
-  --interim data/interim/interim.parquet \
-  --task trajectory --window 64 --horizon 12 \
-  --out data/processed/traj_w64_h12
+python -m src.preprocessing.map_reduce \
+    --input_dir data/processed_pickle_2/ \
+    --output_dir data/processed_final/map_reduced/ \
+    --num_workers 0 \
+    --run_name map_reduce_run
 ```
-ETA task
+
+**Step C: Train/Val/Test Split**
+Splits data by MMSI to prevent leakage.
+
 ```bash
-bash scripts/make_processed.sh \
-  --interim data/interim/interim.parquet \
-  --task eta --window 64 \
-  --out data/processed/eta_w64
+python -m src.preprocessing.train_test_split \
+    --data_dir data/processed_final/map_reduced/ \
+    --val_size 0.1 \
+    --test_size 0.1 \
+    --random_state 42
 ```
-Anomaly task
+
+-----
+
+## 🧠 Model Training
+
+We support two primary deep learning architectures. Configuration is handled via YAML files in `configs/`.
+
+### Train TPTrans (Hybrid CNN-Transformer)
+
+Our custom continuous regression model.
+
 ```bash
-bash scripts/make_processed.sh \
-  --interim data/interim/interim.parquet \
-  --task anomaly --window 64 --horizon 12 \
-  --out data/processed/anom_w64_h12
+python -m src.train.train_tptrans_transformer --config configs/traj_tptrans.yaml
 ```
 
-⸻
+### Train TrAISformer (Generative Discrete)
 
-3) Train Models
+The discrete classification model based on Nguyen et al.
 
-GRU baseline (trajectory)
 ```bash
-python -m src.train.train_traj --config configs/traj_gru_small.yaml
+python -m src.train.train_traisformer --config configs/traj_traisformer.yaml
 ```
-TPTrans hybrid (CNN + Transformer)
+
+*Note: Both training scripts automatically utilize the K-Means sampling strategy defined in the dataloader configuration.*
+
+-----
+
+## 📊 Evaluation & Visualization
+
+We provide a comprehensive evaluation script that calculates ADE/FDE metrics and generates qualitative plots (static images and interactive maps).
+
+**Run Full Evaluation on Test Set:**
+This command evaluates TPTrans, TrAISformer, and the Kalman baseline, generating an interactive Folium map and trajectory plots for specific vessels.
+
 ```bash
-python -m src.train.train_traj --config configs/traj_tptrans_base.yaml
-```
-ETA prediction (GRU)
-```bash
-python -m src.train.train_eta --config configs/eta_gru.yaml
-```
-
-⸻
-
-🧠 Features
-	•	Handles irregular sampling (keeps Δt as input).
-	•	Computes local kinematics (Δx, Δy, speed change, turn rate).
-	•	Produces windowed sequences for supervised or self-supervised training.
-	•	Flexible model config (via YAML) and plug-and-play architecture.
-	•	Metrics: ADE, FDE (trajectory), MAE/MAPE/P95 (ETA), AUROC/AUPRC (anomaly).
-
-⸻
-
-🧩 Model Zoo
-
-Model	Type	Use Case	Description
-Constant Velocity	Baseline	Trajectory	Predicts next points by last velocity
-GRUSeq2Seq	RNN	Trajectory / ETA	Encoder-decoder GRU
-TPTrans	CNN + Transformer	Trajectory	Local + global spatio-temporal model
-GRU Forecaster	RNN	Anomaly	Self-supervised reconstruction/forecasting
-
-
-⸻
-
-⚙️ Data Expectations
-
-Minimum columns:
-
-mmsi, timestamp, lat, lon
-
-Recommended:
-
-sog, cog, heading, nav_status, shiptype, draught, destination
-
-
-⸻
-
-📈 Metrics
-
-Task	Metrics	Notes
-Trajectory	ADE, FDE, Hausdorff	Position accuracy per horizon
-ETA	MAE, MAPE, P95	Time-of-arrival accuracy
-Anomaly	AUROC, AUPRC, TTD	Detection accuracy and latency
-
-Metric descriptions
-	•	ADE: Average Displacement Error — mean L2 distance between predicted and true positions.
-	•	FDE: Final Displacement Error — distance at final predicted step.
-	•	MAE / MAPE: Mean (Absolute) Error / Mean Absolute Percentage Error for ETA.
-	•	P95: 95th percentile ETA error.
-	•	AUROC / AUPRC: Anomaly detection quality.
-	•	TTD: Time-to-detection (anomaly detection latency).
-
-⸻
-
-🧠 Insights from the Literature
-
-Insight	Source
-RNNs (Bi-LSTM/GRU) perform best for short- to mid-term predictions.	JMSE 2025
-CNN + Transformer improves turning and long-horizon accuracy.	TPTrans 2023
-ETA accuracy depends on vessel dynamics, route features, and environment.	ETA Review 2025
-Data cleaning, segmentation, and feature engineering strongly affect model quality.	AI in Ship Trajectory Prediction 2024
-
-
-⸻
-
-🏁 Deliverables
-	1.	Clean AIS dataset with feature and label sets.
-	2.	Baseline + TPTrans model checkpoints.
-	3.	Evaluation report (tables, figures, ablation results).
-	4.	Final presentation: “Deep Learning for Maritime Domain Awareness”
-
-⸻
-
-📚 References
-	1.	Artificial Intelligence in Ship Trajectory Prediction (2024) — Overview of ML and DL techniques for AIS trajectory modeling.
-	2.	TPTrans: Vessel Trajectory Prediction Model Based on CNN and Transformer (2023) — CNN + Transformer hybrid for maritime motion forecasting.
-	3.	Vessel Trajectory Prediction with Deep Learning Techniques (JMSE, 2025) — Empirical benchmark of RNNs and Transformers on AIS data.
-	4.	Prediction of Vessel Arrival Time to Port — A Review of Current Studies (2025) — ETA modeling review and factor taxonomy.
-
-⸻
-
-🛠️ Troubleshooting
-	•	CUDA not found → Install CPU-only PyTorch or remove CUDA wheels from requirements.txt.
-	•	Column mismatch → Adjust src/dataio/load_ais.py or rename columns in raw data.
-	•	Insufficient data → Reduce window or horizon in YAML configs.
-	•	Permissions → Make sure scripts are executable:
-```bash
-chmod +x scripts/*.sh
+python -m src.eval.evaluate_trajectory \
+  --split_dir data/processed/map_reduced/test \
+  --ckpt data/checkpoints/traj_tptrans_delta.pt,data/checkpoints/traj_traisformer.pt \
+  --model tptrans,traisformer,kalman \
+  --out_dir data/figures/final/all_models_test \
+  --pred_cut 80 \
+  --folium \
+  --same_pic \
+  --collect \
+  --samples 1 --temperature 0 --top_k 20 \
+  --mmsi 212801000,215933000,218615000,230617000,244554000,248891000,250005981,255802840,305575000,305643000,352005235,636015943,636022355
 ```
 
+**Key Arguments:**
 
-⸻
+  * `--pred_cut 80`: Uses the first 80% of a trip as history to predict the remaining 20%.
+  * `--folium`: Generates an interactive HTML map (`map_model.html`).
+  * `--mmsi`: (Optional) Comma-separated list of MMSIs to visualize specific vessels.
+  * `--no_plots`: (Optional) does not plot, only gives metrics and predictions.
 
-🧩 Next Steps
-	•	Add weather or sea condition data for ETA enhancement.
-	•	Implement masked-step pretraining for anomaly detection.
-	•	Integrate Graph Attention for vessel proximity interactions.
-	•	Deploy inference API using FastAPI or Flask.
+**Full Workflow pipline can be seen in notebooks/workflow.ipynb**
+-----
 
-⸻
+## 📈 Results
 
-📖 Citation
+### Quantitative Performance (ADE/FDE in km)
+$$
+\begin{tabular}{l cc cc cc}
+    \toprule
+    & \multicolumn{2}{c}{\textbf{1 Hour Horizon}} & \multicolumn{2}{c}{\textbf{2 Hour Horizon}} & \multicolumn{2}{c}{\textbf{3 Hour Horizon}} \\
+    \cmidrule(lr){2-3} \cmidrule(lr){4-5} \cmidrule(lr){6-7}
+    \textbf{Model} & \textbf{ADE} & \textbf{FDE} & \textbf{ADE} & \textbf{FDE} & \textbf{ADE} & \textbf{FDE} \\
+    & \scriptsize{(Mean/Med)} & \scriptsize{(Mean/Med)} & \scriptsize{(Mean/Med)} & \scriptsize{(Mean/Med)} & \scriptsize{(Mean/Med)} & \scriptsize{(Mean/Med)} \\
+    \midrule
+    Kalman Filter   & 1.58 / \textbf{0.66} & 3.60 / 1.50 & 3.70 / 1.77 & 8.86 / 4.64 & 6.05 / 3.38 & 14.84 / 9.21 \\
+    TrAISformer     & 1.38 / 0.90 & 2.41 / 1.37 & 2.62 / \textbf{1.48} & \textbf{5.42} / \textbf{2.70} & \textbf{4.20} / \textbf{2.24} & \textbf{9.41} / \textbf{4.53} \\
+    \textbf{TPTrans (Ours)} & \textbf{1.21} / 0.79 & \textbf{2.07} / \textbf{1.23} & \textbf{2.55} / 1.50 & 5.85 / 2.92 & 4.61 / 2.60 & 11.69 / 6.28 \\
+    \midrule
+    \multicolumn{7}{c}{\footnotesize \textit{Dataset Statistics: Mean Trip Length = 4.17 h, Median Trip Length = 4.42 h}} \\
+    \bottomrule
+\end{tabular}
+$$
 
-If you build on this work, cite the corresponding research papers above.
+*TPTrans achieves the best short-term precision, while TrAISformer demonstrates superior long-term stability.*
 
-⸻
+-----
 
-Author: Group 11 — 2025
-Location: Copenhagen, Denmark
+## 👥 Authors 
 
----
+**Technical University of Denmark (DTU)**
+
+  * **Alexander Schiøtz** (s221221)
+  * **Felix Thomsen** (s221710) 
+  * **Bertram Hage** (s224918)
+  * **Christian Rand** (s224930)
+
+**Supervisor:** Dr. Peder Heiselberg (DTU Space).
+
+-----

@@ -3,7 +3,7 @@ task: trajectory
 
 # CHANGE TO YOUR DATA PATH
 processed_dir: data/processed_final/map_reduced/ #/dtu/blackhole/10/178320/preprocessed_2/final/
-out_dir: data/checkpoints/traj_tptrans/
+out_dir: data/checkpoints/
 
 # Sequence setup
 window: 64          # length of observed history
