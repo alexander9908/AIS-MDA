@@ -21,8 +21,7 @@ import folium
 try:
     from src.models.traisformer import TrAISformer, BinSpec
 except ImportError:
-    print("[Warning] Could not import TrAISformer3, falling back...")
-    from src.models.legacy.traisformer_old import TrAISformer, BinSpec
+    print("[Warning] Could not import TrAISformer,")
 
 try:
     from src.models.tptrans_transformer import TPTrans
@@ -31,7 +30,8 @@ except ImportError:
     try:
         from src.models.tptrans_gru import TPTrans
     except ImportError:
-         from src.models.legacy.tptrans import TPTrans
+        print("[Warning] Could not import TPTrans Transformer decoder")
+    
 
 # Kalman
 from src.models.kalman_filter.baselines.train_kalman import evaluate_trip_kalman, Bounds

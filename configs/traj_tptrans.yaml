@@ -1,8 +1,9 @@
+# configs/traj_tptrans.yaml
 task: trajectory
 
 # CHANGE TO YOUR DATA PATH
 processed_dir: data/processed_final/map_reduced/ #/dtu/blackhole/10/178320/preprocessed_2/final/
-out_dir: data/checkpoints/traj_traisformer/
+out_dir: data/checkpoints/traj_tptrans/
 
 # Sequence setup
 window: 64          # length of observed history
@@ -23,9 +24,9 @@ features: [LAT, LON, SOG, COG, HEADING, ROT, NAV_STT, TIMESTAMP, MMSI]
 model:
   name: tptrans
   d_model: 512      # latent dimension
-  nhead: 4 #4 #8          # Transformer heads
-  enc_layers: 4 #8     # encoder depth
-  dec_layers: 4 #4     # GRU layers
+  nhead:  8          # Transformer heads
+  enc_layers: 8     # encoder depth
+  dec_layers: 8     # decoder depth
 
 # Training setup
 loss: huber
@@ -33,9 +34,9 @@ optimizer: adamw
 
 # These are what your training script reads:
 lr: 0.0003          # AdamW learning rate
-batch_size: 128 #512 #128     # was 96; 128 is safe on an A100 80GB
-epochs: 25                # allow enough room to converge
-epoch_samples: 4
+batch_size: 512 
+epochs: 200                # allow enough room to converge
+epoch_samples: 5
 
 early_stop_patience: 5     # stop if 5 epochs pass without real improvement
 early_stop_min_delta: 1e-3 # require at least 1e-3 improvement in val loss
@@ -45,5 +46,5 @@ early_stop_min_delta: 1e-3 # require at least 1e-3 improvement in val loss
 huber_delta: 1.0    # SmoothL1 beta (default in code)
 clip_norm: 1.0      # gradient clipping max-norm (default in code)
 
-wandb_group: tp_trans_local_test_v3
-run_name: tptrans_small_run_v3
+wandb_group: tp_trans_local_medium
+run_name: tptrans_medium_run

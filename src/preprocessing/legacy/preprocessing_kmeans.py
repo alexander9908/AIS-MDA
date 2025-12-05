@@ -12,7 +12,7 @@ try:
 except:
     pass
 sys.path.append("..")
-from src.preprocessing import utils_kmeans
+from src.preprocessing.legacy import utils_kmeans
 import pickle
 import matplotlib.pyplot as plt
 import copy

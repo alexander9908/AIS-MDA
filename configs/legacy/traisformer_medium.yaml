@@ -1,7 +1,7 @@
 task: trajectory
 
-processed_dir: data/map_reduced/ # /dtu/blackhole/10/178320/preprocessed_1/final/
-out_dir: data/checkpoints/traisformer_test_new/ #traisformer_full/
+processed_dir: /dtu/blackhole/10/178320/preprocessed_2/final/
+out_dir: data/checkpoints/traisformer/traisformer_medium/
 window: 64
 horizon: 12
 start_mode: kmeans  # set to "kmeans" to enable centroid-based starting points
@@ -15,8 +15,8 @@ kmeans:
 model:
   name: traisformer
   d_model: 512
-  nhead: 4
-  enc_layers: 4 # dec_layers: 12
+  nhead: 8
+  enc_layers: 8 # dec_layers: 12
   dropout: 0.1
 
 # TrAISformer loss auxiliaries
@@ -39,7 +39,13 @@ loss: ce         # (ignored; TrAISformer uses CE internally)
 optimizer: adamw
 lr: 0.0003
 batch_size: 512
-epochs: 30
+epochs: 200
+epoch_samples: 4
 
-early_stop_patience: 15
+early_stop_patience: 50
 early_stop_min_delta: 1e-4
+
+
+
+wandb_group: traisformer_full_medium_small
+run_name: traisformer_medium_run

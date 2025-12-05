@@ -1,6 +1,6 @@
 task: trajectory
 
-processed_dir: /dtu/blackhole/10/178320/preprocessed_1/final/
+processed_dir: /dtu/blackhole/10/178320/preprocessed_2/final/
 out_dir: data/checkpoints/traisformer/traisformer_small/
 window: 64
 horizon: 12

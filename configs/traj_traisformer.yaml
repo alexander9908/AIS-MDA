@@ -1,4 +1,4 @@
-# configs/traisformer.yaml
+# configs/traj_traisformer.yaml
 task: trajectory
 # CHANGE TO YOUR DATA PATH
 processed_dir: data/processed_final/map_reduced/ #/dtu/blackhole/10/178320/preprocessed_2/final/
@@ -46,12 +46,12 @@ model:
 loss: cross_entropy
 optimizer: adamw
 lr: 0.0003
-batch_size: 128
-epochs: 15
+batch_size: 512
+epochs: 200
 epoch_samples: 5
 
 early_stop_patience: 50
 early_stop_min_delta: 1e-4
 
-wandb_group: traisformer_small_test
-run_name: traisformer_small_test_run
+wandb_group: traisformer_local_small
+run_name: traisformer_small_run
